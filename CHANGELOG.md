@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- When a browser-backed provider is unavailable because no OpenGL context could be created, the tile now names the `AIGAUGE_FORCE_WEBENGINE=1` override. The probe reports whether *Qt* can obtain a context, and there are configurations where Chromium finds one on its own — those users were shown what read as a dead end.
+
 ## 0.7.3 - 2026-08-16
 
 ### Added
@@ -10,7 +16,7 @@
 ### Fixed
 
 - Fixed light-grey notches in the widget's four corners on any system using a light theme. Qt erases a top-level widget with the palette's Window brush before `paintEvent` runs, and `paintEvent` only covered the rounded rect, so the corners kept the system theme's colour. Invisible in dark mode, which is why it survived this long.
-- AI Gauge no longer drags Chromium into startup on a session with no OpenGL — a headless X11 display, an XRDP desktop, a VM without a GPU. QtWebEngine initialised a GL context the moment it was imported, and the app imported it unconditionally at launch, so a GL-less session filled the console with `Cannot create platform OpenGL context, neither GLX nor EGL are enabled` before anything useful happened. The gauge itself is plain QtWidgets and needs no GL at all, so WebEngine is now imported on first use and only after a GL probe succeeds. API-key providers (GitHub Copilot, OpenRouter) are unaffected on such machines; providers that scrape through a browser now report that they need one, instead of failing obscurely. Set `AIGAUGE_FORCE_WEBENGINE=1` to skip the probe.
+- Fixed a crash on any session whose X server offers no GLX — a headless X11 display, an XRDP desktop, a VM without a GPU. AI Gauge imported QtWebEngine unconditionally at launch, and QtWebEngine is Chromium: the window itself appeared, then the first automatic refresh drove a page load and Chromium aborted the process. That is the "and then nothing more" in the original report, reproduced 5 runs out of 5. The gauge is plain QtWidgets and needs no OpenGL at all, so WebEngine is now imported on first use and only after a GL probe succeeds. API-key providers (GitHub Copilot, OpenRouter) are unaffected on such machines; providers that scrape through a browser report that they need one rather than taking the app down. Set `AIGAUGE_FORCE_WEBENGINE=1` to skip the probe — worth trying if a machine has working OpenGL that Qt itself cannot reach, where Chromium can still find it on its own.
 
 ### Changed
 
