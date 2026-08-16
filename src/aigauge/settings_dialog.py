@@ -56,7 +56,7 @@ from .providers.claude import CLAUDE_USAGE_URL
 from .providers.codex import CODEX_USAGE_URL
 from .providers.opencode_go import OPENCODE_GO_USAGE_URL
 from .startup import set_start_at_login
-from .webview.cookies import clear_browser_session
+from .webview.cookies import clear_browser_session  # lazy inside; no WebEngine at import
 
 log = logging.getLogger("aigauge.settings_dialog")
 
@@ -676,7 +676,15 @@ class SettingsDialog(QDialog):
         self.fade_when_inactive_cb.setToolTip(
             "Fade the widget when it is not focused and the mouse is away."
         )
-        general_grid.addWidget(self.fade_when_inactive_cb, 2, 0, 1, 4)
+        general_grid.addWidget(self.fade_when_inactive_cb, 2, 0, 1, 2)
+
+        self.square_corners_cb = QCheckBox("Square corners")
+        self.square_corners_cb.setChecked(config.window.square_corners)
+        self.square_corners_cb.setToolTip(
+            "Draw the widget with square corners instead of rounded ones. "
+            "Useful on remote desktops that render the rounded outline poorly."
+        )
+        general_grid.addWidget(self.square_corners_cb, 2, 2, 1, 2)
 
         self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self.opacity_slider.setRange(30, 100)
@@ -1319,6 +1327,7 @@ class SettingsDialog(QDialog):
         config.start_at_login = self.startup_cb.isChecked()
         config.window.always_on_top = self.always_on_top_cb.isChecked()
         config.window.fade_when_inactive = self.fade_when_inactive_cb.isChecked()
+        config.window.square_corners = self.square_corners_cb.isChecked()
         config.window.opacity = self.opacity_slider.value() / 100.0
         new_ui_scale = float(self.ui_scale_combo.currentData())
         self.ui_scale_changed = abs(new_ui_scale - self._initial_ui_scale) > 1e-3

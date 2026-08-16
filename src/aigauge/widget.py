@@ -24,9 +24,11 @@ from PyQt6.QtGui import (
     QMouseEvent,
     QPainter,
     QPainterPath,
+    QPalette,
     QPen,
     QPixmap,
     QPolygonF,
+    QRegion,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -47,6 +49,7 @@ from .config import (
     ColorThresholds,
     Config,
     WINDOW_COLLAPSED_HEIGHT,
+    WINDOW_COLLAPSED_MIN_WIDTH,
     WINDOW_MAX_HEIGHT,
     WINDOW_MAX_WIDTH,
     WINDOW_MIN_HEIGHT,
@@ -73,6 +76,13 @@ CHIP_NOTCH_HALF_WIDTH = 3.5
 PROVIDER_ORDER = ("claude", "codex", "opencode_go", "copilot", "openrouter")
 COLLAPSED_MIN_HEIGHT = WINDOW_COLLAPSED_HEIGHT
 EXPANDED_MIN_WIDTH = WINDOW_MIN_WIDTH
+COLLAPSED_MIN_WIDTH = WINDOW_COLLAPSED_MIN_WIDTH
+# Window chrome. PANEL_BG doubles as the widget's palette Window brush so any
+# pixel Qt erases outside paintEvent's rounded rect matches the panel instead
+# of the system theme's colour.
+PANEL_BG = "#111827"
+PANEL_BORDER = "#1f2937"
+PANEL_CORNER_RADIUS = 8
 
 
 def _clamp_height(value: int) -> int:
@@ -1523,6 +1533,14 @@ class UsageWidget(QWidget):
         self.setMinimumWidth(WINDOW_WIDTH)
         self.setMaximumWidth(WINDOW_MAX_WIDTH)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        # Qt erases a top-level widget with the palette's Window brush before
+        # paintEvent runs. paintEvent only covers the rounded rect, so on a
+        # light system theme the four corners kept #f0f0f0 and showed as grey
+        # notches (issue #7). Pin the brush to the panel colour so an
+        # unpainted pixel can never contrast, whatever the system theme is.
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(PANEL_BG))
+        self.setPalette(palette)
         # Background is drawn in paintEvent; no widget-level stylesheet — that
         # would cascade into child dialogs (Settings) and break their layout.
         self._apply_window_opacity()
@@ -1539,6 +1557,8 @@ class UsageWidget(QWidget):
         self._cadence_short_text = ""
         self._collapsed = config.window.collapsed
         self._always_on_top_suspensions = 0
+        self._collapsed_chip_max_width = 0
+        self._grip_overlaid = False
 
         # Header bar
         self.title_icon = QLabel()
@@ -1626,9 +1646,11 @@ class UsageWidget(QWidget):
         collapsed_outer.setSpacing(4)
 
         collapsed_header = QHBoxLayout()
+        self._collapsed_header_layout = collapsed_header
         collapsed_header.setContentsMargins(0, 0, 0, 0)
         collapsed_header.setSpacing(4)
         collapsed_title = QLabel(f"AI Gauge {__version__}")
+        self._collapsed_title = collapsed_title
         collapsed_title.setStyleSheet("color:#9ca3af; font-size:10px; font-weight:600;")
         self._collapsed_title_icon = QLabel()
         self._collapsed_title_icon.setPixmap(app_icon().pixmap(14, 14))
@@ -1877,6 +1899,102 @@ class UsageWidget(QWidget):
             max(EXPANDED_MIN_WIDTH, gauge_width),
         )
 
+    def _collapsed_chrome_width(self) -> int:
+        margins = self._collapsed_widget.layout().contentsMargins()
+        return margins.left() + margins.right()
+
+    def _collapsed_width_for(self, *, compact: bool) -> int:
+        """Pill width that fits its content, with the header fully shed or shown.
+
+        ``compact=True`` gives the floor the user may drag down to — icon and
+        buttons only. ``compact=False`` gives the comfortable width that shows
+        the whole header. Both account for the widest summary chip.
+
+        The header must be measured explicitly rather than read as-is: a
+        previous responsive pass may have already shortened it, which would
+        otherwise make the floor drift with whatever was last displayed.
+        """
+        title = self._collapsed_title.text()
+        cadence_visible = not self._collapsed_cadence_label.isHidden()
+        age_visible = not self._collapsed_age_label.isHidden()
+        layout = self._collapsed_header_layout
+        if compact:
+            self._collapsed_title.setText("")
+            self._collapsed_cadence_label.setVisible(False)
+            self._collapsed_age_label.setVisible(False)
+        else:
+            self._collapsed_title.setText(f"AI Gauge {__version__}")
+            self._collapsed_cadence_label.setVisible(
+                bool(self._collapsed_cadence_label.text())
+            )
+            self._collapsed_age_label.setVisible(
+                bool(self._collapsed_age_label.text())
+            )
+        layout.invalidate()
+        layout.activate()
+        header_width = layout.minimumSize().width()
+        self._collapsed_title.setText(title)
+        self._collapsed_cadence_label.setVisible(cadence_visible)
+        self._collapsed_age_label.setVisible(age_visible)
+        layout.invalidate()
+        layout.activate()
+
+        # _collapsed_chip_max_width is recorded by _rebuild_collapsed_summary,
+        # which already builds every chip — measuring here would construct a
+        # second throwaway set on each refit.
+        content = max(header_width, self._collapsed_chip_max_width)
+        return max(
+            COLLAPSED_MIN_WIDTH,
+            min(WINDOW_MAX_WIDTH, content + self._collapsed_chrome_width()),
+        )
+
+    def _minimum_collapsed_width(self) -> int:
+        """Narrowest the pill may be dragged: icon, buttons, widest chip."""
+        return self._collapsed_width_for(compact=True)
+
+    def _preferred_collapsed_width(self) -> int:
+        """Width used when the user hasn't picked one: fits the full header."""
+        return self._collapsed_width_for(compact=False)
+
+    def _target_collapsed_width(self) -> int:
+        """Width to apply in collapsed mode: the user's, else fit-to-content."""
+        minimum = self._minimum_collapsed_width()
+        saved = self._config.window.collapsed_width
+        if saved is None:
+            return max(minimum, self._preferred_collapsed_width())
+        return max(minimum, min(saved, WINDOW_MAX_WIDTH))
+
+    def _apply_responsive_collapsed_header(self) -> None:
+        """Shed header detail as the pill narrows, least useful part first.
+
+        Mirrors _apply_responsive_header for the collapsed pill: version, then
+        the "Xs ago" stamp, then the cadence, then the name — leaving the icon
+        and the three buttons, which always stay.
+        """
+        layout = self._collapsed_header_layout
+        available = self.width() - self._collapsed_chrome_width()
+
+        def overflows() -> bool:
+            layout.invalidate()
+            layout.activate()
+            return layout.minimumSize().width() > available
+
+        self._collapsed_title.setText(f"AI Gauge {__version__}")
+        self._collapsed_cadence_label.setVisible(
+            bool(self._collapsed_cadence_label.text())
+        )
+        self._collapsed_age_label.setVisible(bool(self._collapsed_age_label.text()))
+        if overflows():
+            self._collapsed_title.setText("AI Gauge")
+        if overflows() and not self._collapsed_age_label.isHidden():
+            self._collapsed_age_label.hide()
+        if overflows() and not self._collapsed_cadence_label.isHidden():
+            self._collapsed_cadence_label.hide()
+        if overflows():
+            self._collapsed_title.setText("")
+        layout.invalidate()
+        layout.activate()
+
     def _apply_responsive_layout(self) -> bool:
         available_width = self._available_tile_width()
         changed = False
@@ -1901,11 +2019,22 @@ class UsageWidget(QWidget):
         if self._resizing_with_grip:
             return
         if self._collapsed:
+            # Width is content-derived (or the user's saved pill width) rather
+            # than a fixed WINDOW_WIDTH, so one provider doesn't get a mostly
+            # empty 340px strip. Height stays fixed to the content.
+            minimum_width = self._minimum_collapsed_width()
+            self.setMinimumWidth(minimum_width)
+            self.setMaximumWidth(WINDOW_MAX_WIDTH)
+            target_width = max(minimum_width, self._target_collapsed_width())
+            if self.width() != target_width:
+                self.resize(target_width, self.height())
+            self._apply_responsive_collapsed_header()
             target_height = max(
                 COLLAPSED_MIN_HEIGHT,
                 min(WINDOW_MAX_HEIGHT, self._collapsed_widget.sizeHint().height()),
             )
-            self.setFixedSize(WINDOW_WIDTH, target_height)
+            self.setFixedHeight(target_height)
+            self._position_overlaid_grip()
             return
 
         # Release the collapsed/fitted constraints before measuring this pass.
@@ -2085,18 +2214,29 @@ class UsageWidget(QWidget):
         if not self._tiles:
             self._collapsed_summary_layout.insertWidget(0, self._collapsed_label)
             self._collapsed_label.setText("No providers")
+            self._collapsed_chip_max_width = 0
             return
         self._collapsed_label.setText("")
         self._collapsed_label.hide()
         providers = sorted(self._tiles, key=self._tile_sort_key)
-        available_width = WINDOW_WIDTH - 16
+        margins = self._collapsed_widget.layout().contentsMargins()
+        # Wrap chips against the pill's real width rather than a fixed 340px,
+        # so a narrowed pill reflows instead of overflowing (issue #7).
+        available_width = max(
+            COLLAPSED_MIN_WIDTH,
+            (self.width() if self._collapsed else self._target_collapsed_width())
+            - margins.left()
+            - margins.right(),
+        )
         row_widget: QWidget | None = None
         row_layout: QHBoxLayout | None = None
         row_width = 0
         spacing = 5
+        max_chip_width = 0
         for provider in providers:
             chip = self._summary_chip(provider)
             chip_width = chip.width()
+            max_chip_width = max(max_chip_width, chip_width)
             needed = chip_width if row_layout is None else chip_width + spacing
             if row_layout is None or row_width + needed > available_width:
                 if row_layout is not None:
@@ -2112,6 +2252,7 @@ class UsageWidget(QWidget):
             row_width += needed
         if row_layout is not None:
             row_layout.addStretch(1)
+        self._collapsed_chip_max_width = max_chip_width
         if self._collapsed:
             self._refit_height()
 
@@ -2204,6 +2345,10 @@ class UsageWidget(QWidget):
         self._tile_scroll.setVisible(not self._collapsed)
         self._tile_container.setVisible(not self._collapsed)
         self._resize_footer.setVisible(not self._collapsed)
+        # The pill is width-resizable now and the grip is its only affordance
+        # for that, but a footer row would add ~14px to a widget whose whole
+        # point is being small. Float the grip over the corner instead.
+        self._set_grip_overlaid(self._collapsed)
         self._refresh_collapsed_summary()
         if self._collapsed:
             self._do_refit_height()
@@ -2225,6 +2370,30 @@ class UsageWidget(QWidget):
         if save:
             self._config.window.collapsed = self._collapsed
             self._config.save()
+
+    def _set_grip_overlaid(self, overlaid: bool) -> None:
+        """Move the resize grip between the footer row and a corner overlay."""
+        if overlaid == self._grip_overlaid:
+            return
+        self._grip_overlaid = overlaid
+        footer_layout = self._resize_footer.layout()
+        if overlaid:
+            footer_layout.removeWidget(self._resize_grip)
+            self._resize_grip.setParent(self)
+            self._resize_grip.show()
+        else:
+            footer_layout.addWidget(self._resize_grip)
+        self._position_overlaid_grip()
+
+    def _position_overlaid_grip(self) -> None:
+        if not self._grip_overlaid:
+            return
+        grip = self._resize_grip
+        grip.move(
+            self.width() - grip.width() - 3,
+            self.height() - grip.height() - 3,
+        )
+        grip.raise_()
 
     def _apply_always_on_top(self, on: bool) -> None:
         flags = self.windowFlags()
@@ -2306,6 +2475,8 @@ class UsageWidget(QWidget):
         )
         self._collapsed = self._config.window.collapsed
         self._apply_collapsed_state(save=False)
+        self._apply_corner_mask()
+        self.update()
         if was_visible:
             self.show()  # re-applying flags hides the window
             self._apply_window_opacity()
@@ -2345,6 +2516,7 @@ class UsageWidget(QWidget):
         super().showEvent(event)
         self._clamp_to_visible_screen()
         self._apply_window_opacity()
+        self._apply_corner_mask()
 
     def enterEvent(self, event):  # noqa: N802
         self._mouse_inside = True
@@ -2368,13 +2540,31 @@ class UsageWidget(QWidget):
         # Keep height fixed for the drag, then apply responsive rows once the
         # final width is known and the pointer no longer needs to follow them.
         self._resizing_with_grip = False
+        if self._collapsed:
+            # Record the dragged width *before* refitting: the refit resizes to
+            # the saved width, so saving afterwards would snap the pill back to
+            # its fit-to-content default and discard the drag.
+            self._save_collapsed_width()
+            # Reflow the chips into the new width before measuring height.
+            self._refresh_collapsed_summary()
         self._do_refit_height()
         self._save_expanded_width()
 
     def resizeEvent(self, event):  # noqa: N802
         super().resizeEvent(event)
+        self._apply_corner_mask()
+        self._position_overlaid_grip()
         if hasattr(self, "cadence_label"):
             self._refresh_cadence_label()
+
+    def _save_collapsed_width(self) -> None:
+        if not self._collapsed:
+            return
+        self._config.window.collapsed_width = max(
+            COLLAPSED_MIN_WIDTH,
+            min(self.width(), WINDOW_MAX_WIDTH),
+        )
+        self._config.save()
 
     def _save_expanded_width(self) -> None:
         if self._collapsed:
@@ -2443,20 +2633,44 @@ class UsageWidget(QWidget):
         self._config.window.y = self.y()
         self._config.window.collapsed = self._collapsed
         self._save_expanded_width()
+        self._save_collapsed_width()
         self._config.save()
 
     def closeEvent(self, event):  # noqa: N802
         self._do_refit_height()
         self._config.window.collapsed = self._collapsed
         self._save_expanded_width()
+        self._save_collapsed_width()
         self._config.save()
         self.closed.emit()
         super().closeEvent(event)
+
+    def _corner_radius(self) -> int:
+        """Corner radius for the panel, or 0 when square corners are configured."""
+        return 0 if self._config.window.square_corners else PANEL_CORNER_RADIUS
+
+    def _apply_corner_mask(self) -> None:
+        """Clip the window to its rounded outline.
+
+        Without this, the corner pixels outside the rounded rect still belong
+        to the window and are erased with the palette brush. Masking removes
+        them from the window shape outright, which — unlike
+        WA_TranslucentBackground — needs no compositor, so it also holds up
+        over RDP and on bare X11 sessions (issue #7).
+        """
+        radius = self._corner_radius()
+        if radius <= 0:
+            self.clearMask()
+            return
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()), radius, radius)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
     # Subtle rounded background
     def paintEvent(self, event):  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QColor("#111827"))
-        painter.setPen(QPen(QColor("#1f2937"), 1))
-        painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 8, 8)
+        painter.setBrush(QColor(PANEL_BG))
+        painter.setPen(QPen(QColor(PANEL_BORDER), 1))
+        radius = self._corner_radius()
+        painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), radius, radius)

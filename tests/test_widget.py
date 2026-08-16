@@ -2,14 +2,22 @@ from datetime import datetime, timedelta
 
 import pytest
 from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from aigauge import __version__
-from aigauge.config import BrowserAccount, ColorThresholds, Config
+from aigauge.config import (
+    WINDOW_COLLAPSED_HEIGHT,
+    WINDOW_COLLAPSED_MIN_WIDTH,
+    BrowserAccount,
+    ColorThresholds,
+    Config,
+)
 from aigauge.models import SnapshotStatus, UsageMetric, UsageSnapshot
 from aigauge.ratio import RatioEstimate
 from aigauge.widget import (
+    PANEL_BG,
     UsageWidget,
     _format_ratio_inline,
     _MetricRow,
@@ -603,7 +611,12 @@ def test_expanded_widget_resizes_width_only_and_persists_width(qtbot):
     assert widget._config.window.manually_resized is False  # noqa: SLF001
 
     widget.set_collapsed(True)
-    assert widget.width() == 340
+    # The pill fits its own content instead of inheriting the panel's width,
+    # and can be dragged narrower still.
+    assert widget.width() == widget._preferred_collapsed_width()  # noqa: SLF001
+    assert widget.width() < 340
+    assert widget.minimumWidth() == widget._minimum_collapsed_width()  # noqa: SLF001
+    assert widget.minimumWidth() < widget.width()
     widget.set_collapsed(False)
     widget._do_refit_height()  # noqa: SLF001
     assert widget.width() == 520
@@ -998,7 +1011,117 @@ def test_collapsed_mode_resizes_immediately(qtbot):
 
     widget.set_collapsed(True)
 
-    assert widget.height() == 58
+    # Collapsing shrinks to the pill's fitted height straight away rather than
+    # keeping the expanded height until the next refit.
+    assert widget.height() == widget.minimumHeight() == widget.maximumHeight()
+    assert widget.height() <= WINDOW_COLLAPSED_HEIGHT + 8
+
+
+def test_panel_palette_never_leaves_light_corners(qtbot):
+    """Regression for issue #7.
+
+    Qt erases a top-level widget with the palette Window brush before
+    paintEvent runs, and paintEvent only covers the rounded rect. With the
+    default brush the corners kept the system theme's colour, which on a light
+    Windows theme showed as grey notches around the dark panel.
+    """
+    widget = UsageWidget(Config())
+    qtbot.addWidget(widget)
+
+    assert widget.palette().color(QPalette.ColorRole.Window) == QColor(PANEL_BG)
+
+
+def test_rounded_corners_are_masked_out_of_the_window_shape(qtbot):
+    widget = UsageWidget(Config())
+    qtbot.addWidget(widget)
+    widget.resize(340, 120)
+    widget.show()
+
+    mask = widget.mask()
+    assert not mask.isEmpty()
+    # The corner pixel is outside the window; a point inside the radius is not.
+    assert not mask.contains(QPoint(0, 0))
+    assert mask.contains(QPoint(30, 30))
+
+
+def test_square_corners_setting_skips_the_mask(qtbot):
+    config = Config()
+    config.window.square_corners = True
+    widget = UsageWidget(config)
+    qtbot.addWidget(widget)
+    widget.resize(340, 120)
+    widget.show()
+
+    assert widget.mask().isEmpty()
+    assert widget._corner_radius() == 0  # noqa: SLF001
+
+
+def test_collapsed_pill_can_be_dragged_narrower_and_remembers_it(qtbot):
+    config = Config()
+    widget = UsageWidget(config)
+    qtbot.addWidget(widget)
+    widget.update_snapshot(_ok_snapshot("codex"), "Codex")
+    widget.set_collapsed(True)
+
+    floor = widget.minimumWidth()
+    assert floor == WINDOW_COLLAPSED_MIN_WIDTH
+    assert widget.width() > floor  # starts fitted to the full header
+
+    widget.resize(floor + 20, widget.height())
+    widget._on_resize_finished()  # noqa: SLF001
+
+    # The drag survives the refit that follows it, and is persisted.
+    assert widget.width() == floor + 20
+    assert config.window.collapsed_width == floor + 20
+
+    widget.set_collapsed(False)
+    widget.set_collapsed(True)
+    assert widget.width() == floor + 20
+
+
+def test_collapsed_pill_cannot_be_dragged_below_its_floor(qtbot):
+    widget = UsageWidget(Config())
+    qtbot.addWidget(widget)
+    widget.update_snapshot(_ok_snapshot("codex"), "Codex")
+    widget.set_collapsed(True)
+
+    widget.resize(40, widget.height())
+    widget._on_resize_finished()  # noqa: SLF001
+
+    assert widget.width() == widget.minimumWidth() == WINDOW_COLLAPSED_MIN_WIDTH
+
+
+def test_collapsed_header_sheds_detail_as_the_pill_narrows(qtbot):
+    widget = UsageWidget(Config())
+    qtbot.addWidget(widget)
+    widget.update_snapshot(_ok_snapshot("codex"), "Codex")
+    widget.set_collapsed(True)
+
+    assert "0.7" in widget._collapsed_title.text()  # noqa: SLF001
+
+    widget.resize(widget.minimumWidth(), widget.height())
+    widget._on_resize_finished()  # noqa: SLF001
+
+    # At the floor only the icon and the buttons remain.
+    assert widget._collapsed_title.text() == ""  # noqa: SLF001
+
+
+def test_collapsed_pill_keeps_its_height_when_the_grip_appears(qtbot):
+    widget = UsageWidget(Config())
+    qtbot.addWidget(widget)
+    widget.update_snapshot(_ok_snapshot("codex"), "Codex")
+    widget.set_collapsed(True)
+
+    # The grip floats over the corner rather than taking a footer row, so
+    # making the pill resizable must not make it taller.
+    assert widget._grip_overlaid is True  # noqa: SLF001
+    assert widget._resize_footer.isVisibleTo(widget) is False  # noqa: SLF001
+    assert widget.height() == WINDOW_COLLAPSED_HEIGHT
+
+    widget.set_collapsed(False)
+    assert widget._grip_overlaid is False  # noqa: SLF001
+    assert widget._resize_footer.isVisibleTo(widget) is True  # noqa: SLF001
+
 
 def test_openrouter_model_expand_resizes_immediately(qtbot):
     widget = UsageWidget(Config())

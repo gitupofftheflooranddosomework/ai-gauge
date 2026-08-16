@@ -53,6 +53,17 @@ if ($OneFile) { $args += "--onefile" }
 
 & $venvPython @args
 
+# --collect-all on the WebEngine modules also drags in Chromium's debug
+# resource packs, the DevTools front-end, and every Qt translation — ~140 MB
+# the app never loads. Strip them before the folder is archived (issue #7).
+# One-file builds are already packed by this point, so there is nothing to do.
+if (-not $OneFile) {
+    Write-Host ""
+    Write-Host "Pruning unused Qt/Chromium payload..."
+    & $venvPython (Join-Path $PSScriptRoot "tools\prune_bundle.py") (Join-Path $PSScriptRoot "dist\ai-gauge")
+    if ($LASTEXITCODE -ne 0) { Write-Error "Bundle prune failed." }
+}
+
 Write-Host ""
 Write-Host "Build complete." -ForegroundColor Green
 if ($OneFile) {

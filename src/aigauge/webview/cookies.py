@@ -16,9 +16,26 @@ from ..config import (
     set_provider_cookie,
     webview_profile_dir,
 )
-from .profile import get_profile
 
 log = logging.getLogger("aigauge.webview.cookies")
+
+
+# Resolved on first use rather than imported at module scope: .profile pulls in
+# QtWebEngine, which initialises a GL context and aborts on a session that has
+# none. The app imports this module at startup to hydrate cookies, so that
+# import must stay Chromium-free (issue #7). Kept as a module attribute so it
+# remains patchable.
+get_profile = None
+
+
+def _get_profile(account_id: str):
+    global get_profile
+    if get_profile is None:
+        from .profile import get_profile as _resolved
+
+        get_profile = _resolved
+    return get_profile(account_id)
+
 
 # 60-day expiry — Claude/ChatGPT session tokens last weeks; we re-set on each
 # launch anyway, so this is just to keep the cookie persistent across the
@@ -142,7 +159,7 @@ def _parse_cookie_pairs(provider: str, pasted: str) -> list[tuple[str, str]]:
 
 def _set_cookie(kind: str, account_id: str, name: str, value: str) -> None:
     domain = COOKIE_DOMAINS[kind]
-    profile = get_profile(account_id)
+    profile = _get_profile(account_id)
     store = profile.cookieStore()
 
     cookie = QNetworkCookie(
@@ -211,7 +228,7 @@ def import_browser_cookies(
     if not matching:
         return False
 
-    store = get_profile(account_id).cookieStore()
+    store = _get_profile(account_id).cookieStore()
     # A signed-out visit may already have created a host-only cookie with the
     # same name as the authenticated cookie. If the imported cookie is then
     # converted into a domain cookie, Chromium keeps both and may send the
@@ -267,7 +284,7 @@ def clear_browser_session(account_id: str) -> None:
         errors.append(f"encrypted cookie: {exc}")
 
     try:
-        profile = get_profile(account_id)
+        profile = _get_profile(account_id)
         profile.cookieStore().deleteAllCookies()
         profile.clearHttpCache()
     except Exception as exc:  # noqa: BLE001 - report partial cleanup to the UI

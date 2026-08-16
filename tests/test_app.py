@@ -343,6 +343,9 @@ def test_open_login_uses_unsaved_opencode_account_url(monkeypatch):
             return False
 
     monkeypatch.setattr(app_module, "LoginWindow", FakeLoginWindow)
+    # Sign-in is refused when QtWebEngine is unusable, and the offscreen test
+    # platform genuinely has no GL context. This test drives a fake window.
+    monkeypatch.setattr(app_module.webengine, "is_available", lambda: True)
     app = App.__new__(App)
     app._config = Config()  # noqa: SLF001
     app._settings_dialog = SimpleNamespace(  # noqa: SLF001

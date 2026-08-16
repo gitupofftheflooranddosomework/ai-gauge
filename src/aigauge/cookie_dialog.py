@@ -15,7 +15,8 @@ from PyQt6.QtWidgets import (
 from .config import COOKIE_NAMES, set_provider_cookie
 from .config import get_provider_cookie
 from .webview.cookies import _parse_cookie_pairs, inject_session_cookie
-from .webview.verify import VERIFY_TARGETS, verify_session
+from .webview import runtime as webengine
+from .webview.targets import VERIFY_TARGETS
 
 log = logging.getLogger("aigauge.cookie_dialog")
 
@@ -188,6 +189,19 @@ class CookieDialog(QDialog):
             self.accept()
             return
 
+        if not webengine.is_available():
+            # Verification loads the provider's page in an embedded browser.
+            # Without one there is nothing to verify against, so keep the
+            # cookie the user pasted rather than blocking on a check we can't
+            # run (issue #7).
+            log.info(
+                "skipping cookie verify for %s: %s",
+                self._provider,
+                webengine.unavailable_reason(),
+            )
+            self.accept()
+            return
+
         self._set_busy(True)
         self._status.setText(
             f"<span style='color:#9ca3af;'>Saved. Verifying that the cookie loads "
@@ -196,6 +210,8 @@ class CookieDialog(QDialog):
         QTimer.singleShot(500, self._start_verify)
 
     def _start_verify(self) -> None:
+        from .webview.verify import verify_session
+
         self._verifier = verify_session(
             self._provider,
             self._on_verify_done,

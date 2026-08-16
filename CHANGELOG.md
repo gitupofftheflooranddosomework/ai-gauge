@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.3 - 2026-08-16
+
+### Added
+
+- Added a **Square corners** setting. The rounded outline is masked out of the window shape, which is correct everywhere but leaves an aliased edge; square corners skip the mask entirely and are the safer choice on remote desktops that render window masks poorly.
+- The collapsed pill can now be resized. Its width follows its own content instead of being pinned to the panel's 340px, the resize grip floats over its corner rather than claiming a footer row, and the header sheds the version, the "Xs ago" stamp, the cadence and finally its name as the pill narrows — down to a 150px floor. One provider no longer means a mostly empty strip.
+
+### Fixed
+
+- Fixed light-grey notches in the widget's four corners on any system using a light theme. Qt erases a top-level widget with the palette's Window brush before `paintEvent` runs, and `paintEvent` only covered the rounded rect, so the corners kept the system theme's colour. Invisible in dark mode, which is why it survived this long.
+- AI Gauge no longer drags Chromium into startup on a session with no OpenGL — a headless X11 display, an XRDP desktop, a VM without a GPU. QtWebEngine initialised a GL context the moment it was imported, and the app imported it unconditionally at launch, so a GL-less session filled the console with `Cannot create platform OpenGL context, neither GLX nor EGL are enabled` before anything useful happened. The gauge itself is plain QtWidgets and needs no GL at all, so WebEngine is now imported on first use and only after a GL probe succeeds. API-key providers (GitHub Copilot, OpenRouter) are unaffected on such machines; providers that scrape through a browser now report that they need one, instead of failing obscurely. Set `AIGAUGE_FORCE_WEBENGINE=1` to skip the probe.
+
+### Changed
+
+- The one-folder build is ~140 MB smaller (~520 MB to ~380 MB). `--collect-all` on the WebEngine modules was collecting Chromium's debug resource packs and the DevTools front-end (~88 MB, never loaded), plus Qt translations and Chromium locale packs for every language (~52 MB; AI Gauge's own UI is English-only). `tools/prune_bundle.py` now removes them after PyInstaller runs; pass `--keep-localisation` to retain the language files.
+
 ## 0.7.2 - 2026-08-02
 
 ### Added

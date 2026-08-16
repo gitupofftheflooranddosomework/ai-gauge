@@ -6,7 +6,22 @@ from typing import Any, Callable
 from PyQt6.QtCore import QObject
 
 from ..models import SnapshotStatus, UsageSnapshot
-from ..webview.scraper import HeadlessScraper
+from ..webview import runtime as webengine
+
+# Resolved on first scrape rather than imported at module scope: ..webview
+# .scraper pulls in QtWebEngine, and importing Chromium aborts on a session
+# with no GL context (issue #7). Kept as a module attribute so it remains
+# patchable.
+HeadlessScraper = None
+
+
+def _scraper_class():
+    global HeadlessScraper
+    if HeadlessScraper is None:
+        from ..webview.scraper import HeadlessScraper as _resolved
+
+        HeadlessScraper = _resolved
+    return HeadlessScraper
 
 
 class ScrapeRunner:
@@ -44,9 +59,31 @@ class ScrapeRunner:
         self._transport_max_attempts = max(1, transport_max_attempts)
         self._build_max_attempts = max(1, build_max_attempts)
         self._parent = parent
-        self._scraper: HeadlessScraper | None = None
+        self._scraper: Any | None = None
 
     def run(self, on_done: Callable[[UsageSnapshot], None]) -> None:
+        if not webengine.is_available():
+            # No GL context in this session, so Chromium can't start. Report it
+            # on the tile instead of taking the whole app down (issue #7).
+            self._log.warning(
+                "provider needs a browser but WebEngine is unavailable "
+                "provider=%s reason=%s",
+                self._account_id,
+                webengine.unavailable_reason(),
+            )
+            on_done(
+                UsageSnapshot(
+                    provider=self._account_id,
+                    status=SnapshotStatus.ERROR,
+                    error=(
+                        "needs an embedded browser, which this session can't "
+                        f"start — {webengine.unavailable_reason()}"
+                    ),
+                )
+            )
+            return
+
+        scraper_class = _scraper_class()
         attempts = [0]
 
         def _handle(result: Any, error: str) -> None:
@@ -89,7 +126,7 @@ class ScrapeRunner:
 
         def _start_scrape() -> None:
             attempts[0] += 1
-            self._scraper = HeadlessScraper(
+            self._scraper = scraper_class(
                 provider=self._account_id,
                 url=self._url,
                 extractor_js=self._extractor_js,

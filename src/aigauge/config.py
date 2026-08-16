@@ -21,6 +21,10 @@ WINDOW_MAX_WIDTH = 900
 WINDOW_MIN_HEIGHT = 80
 WINDOW_MAX_HEIGHT = 900
 WINDOW_COLLAPSED_HEIGHT = 58
+# The collapsed pill sizes itself to its own content and can be dragged
+# narrower than the expanded panel's floor — a single-provider user should not
+# be stuck with a mostly-empty 340px strip (issue #7).
+WINDOW_COLLAPSED_MIN_WIDTH = 150
 
 # Per-provider session cookie names (HttpOnly cookies you can't read via JS).
 # COOKIE_NAMES is the primary name shown in the UI. COOKIE_NAME_ALIASES covers
@@ -78,6 +82,11 @@ class WindowState(BaseModel):
     x: int | None = None
     y: int | None = None
     width: int = Field(default=WINDOW_WIDTH, ge=WINDOW_MIN_WIDTH, le=WINDOW_MAX_WIDTH)
+    # Collapsed-mode width, tracked separately from the expanded width so the
+    # two modes don't fight over one number. None means "fit to content".
+    collapsed_width: int | None = Field(
+        default=None, ge=WINDOW_COLLAPSED_MIN_WIDTH, le=WINDOW_MAX_WIDTH
+    )
     # Legacy 0.7.0 fields retained for config compatibility. Expanded height is
     # content-owned; only width is restored or changed by the resize grip.
     height: int = Field(default=220, ge=WINDOW_MIN_HEIGHT, le=WINDOW_MAX_HEIGHT)
@@ -86,6 +95,11 @@ class WindowState(BaseModel):
     always_on_top: bool = True
     opacity: float = Field(default=0.8, ge=0.3, le=1.0)
     fade_when_inactive: bool = False
+    # Draw the panel with square corners instead of an 8px radius. Rounded
+    # corners are masked out of the window shape, which is correct everywhere
+    # but leaves an aliased edge; square corners avoid the mask entirely and
+    # are the safest choice on remote desktops that render masks poorly.
+    square_corners: bool = False
     # Whole-widget zoom. >1 enlarges for high-resolution (4K) displays; <1
     # makes it more compact. Floor is 0.75 — below that the fixed 10-12px fonts
     # become illegible. Applied via Qt's QT_SCALE_FACTOR at launch — see
@@ -260,6 +274,12 @@ class Config(BaseModel):
                 window["width"] = max(WINDOW_MIN_WIDTH, min(width, WINDOW_MAX_WIDTH))
             if isinstance(height, int):
                 window["height"] = max(WINDOW_MIN_HEIGHT, min(height, WINDOW_MAX_HEIGHT))
+            collapsed_width = window.get("collapsed_width")
+            if isinstance(collapsed_width, int):
+                window["collapsed_width"] = max(
+                    WINDOW_COLLAPSED_MIN_WIDTH,
+                    min(collapsed_width, WINDOW_MAX_WIDTH),
+                )
         copilot = data.get("copilot")
         if isinstance(copilot, dict) and copilot.get("monthly_quota") == 300:
             copilot["monthly_quota"] = 1500

@@ -89,6 +89,21 @@ if [ "$(uname -s)" = "Darwin" ] && [ "$ONEFILE" -eq 0 ] \
             dist/ai-gauge.app/Contents/Info.plist
 fi
 
+# --collect-all on the WebEngine modules also drags in Chromium's debug
+# resource packs, the DevTools front-end, and every Qt translation — ~140 MB
+# the app never loads. Strip them before the folder is archived (issue #7).
+# One-file builds are already packed by this point, so there is nothing to do.
+if [ "$ONEFILE" -eq 0 ]; then
+    if [ "$(uname -s)" = "Darwin" ]; then
+        PRUNE_TARGET="dist/ai-gauge.app"
+    else
+        PRUNE_TARGET="dist/ai-gauge"
+    fi
+    echo
+    echo "Pruning unused Qt/Chromium payload..."
+    "$VENV_PY" "$SCRIPT_DIR/tools/prune_bundle.py" "$PRUNE_TARGET"
+fi
+
 echo
 echo "Build complete."
 case "$(uname -s)" in

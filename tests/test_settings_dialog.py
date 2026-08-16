@@ -287,6 +287,20 @@ def test_fade_when_inactive_setting_applies(qtbot, monkeypatch):
     assert config.window.fade_when_inactive is True
     assert config.window.opacity == 0.62
 
+
+def test_square_corners_setting_applies(qtbot, monkeypatch):
+    monkeypatch.setattr(settings_dialog, "set_start_at_login", lambda enabled: None)
+    config = Config()
+    dialog = SettingsDialog(config)
+    qtbot.addWidget(dialog)
+
+    assert not dialog.square_corners_cb.isChecked()
+
+    dialog.square_corners_cb.setChecked(True)
+    dialog.apply_to(config)
+
+    assert config.window.square_corners is True
+
 def test_fable_toggle_is_per_claude_account(qtbot, monkeypatch):
     monkeypatch.setattr(settings_dialog, "set_start_at_login", lambda enabled: None)
     config = Config(

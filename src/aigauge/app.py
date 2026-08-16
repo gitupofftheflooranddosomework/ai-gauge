@@ -47,9 +47,24 @@ from .providers.opencode_go import OpenCodeGoProvider, usage_url as opencode_go_
 from .ratio import RatioStore, sessions_per_week
 from .ratio_dialog import RatioHistoryDialog
 from .settings_dialog import SettingsDialog
+from .webview import runtime as webengine
 from .webview.cookies import clear_browser_session, hydrate_all_from_keyring
-from .webview.login_window import LoginWindow
 from .widget import UsageWidget
+
+# Resolved when the user first opens a sign-in window rather than imported at
+# module scope: .webview.login_window pulls in QtWebEngine, and importing
+# Chromium aborts on a session with no GL context (issue #7). Kept as a module
+# attribute so it remains patchable.
+LoginWindow = None
+
+
+def _login_window_class():
+    global LoginWindow
+    if LoginWindow is None:
+        from .webview.login_window import LoginWindow as _resolved
+
+        LoginWindow = _resolved
+    return LoginWindow
 
 log = logging.getLogger("aigauge.app")
 
@@ -729,6 +744,18 @@ class App(QObject):
         get_draft = getattr(dialog, "draft_browser_account", None)
         return get_draft(provider) if callable(get_draft) else None
 
+    def _show_webengine_unavailable(self, display_name: str) -> None:
+        QMessageBox.warning(
+            self._widget,
+            "Browser sign-in unavailable",
+            f"{display_name} signs in through an embedded browser, which "
+            "needs hardware or software OpenGL.\n\n"
+            f"{webengine.unavailable_reason()}\n\n"
+            "Providers that use an API key or token (GitHub Copilot, "
+            "OpenRouter) work without it. If you believe this is wrong, set "
+            "AIGAUGE_FORCE_WEBENGINE=1 to skip this check.",
+        )
+
     def open_login(self, provider: str) -> None:
         draft = self._draft_browser_account(provider)
         kind = draft.kind if draft is not None else account_kind(self._config, provider)
@@ -747,7 +774,10 @@ class App(QObject):
             if draft is not None
             else display_name_for_account(self._config, provider)
         )
-        dlg = LoginWindow(
+        if not webengine.is_available():
+            self._show_webengine_unavailable(display_name)
+            return
+        dlg = _login_window_class()(
             kind,
             url,
             f"Sign in to {display_name}",
@@ -1171,11 +1201,15 @@ def main() -> int:
         return 0
     setup_logging()
     _install_excepthook()
-    # QtWebEngine requires this attribute set before QApplication is constructed.
+    # QtWebEngine requires this attribute set before QApplication is
+    # constructed. Setting it is just a flag — it initialises nothing — so it
+    # is safe on machines with no GL at all.
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
-    # Importing QtWebEngineWidgets before the QApplication forces its OpenGL
-    # initialisation to happen at the right time.
-    from PyQt6 import QtWebEngineWidgets  # noqa: F401
+    # QtWebEngine itself is deliberately NOT imported here. It is Chromium, and
+    # importing it initialises a GL context, which aborts on a session with no
+    # GLX/EGL — an XRDP desktop, a GPU-less VM (issue #7). The gauge is plain
+    # QtWidgets and needs no GL, so the import is deferred to the first
+    # provider that actually opens a browser. See webview/runtime.py.
 
     _apply_ui_scale_env()
 

@@ -35,6 +35,10 @@ class _FakeScraper:
 def fake_scraper(monkeypatch):
     _FakeScraper.instances.clear()
     monkeypatch.setattr(runner_module, "HeadlessScraper", _FakeScraper)
+    # The runner refuses to scrape when QtWebEngine is unusable, and the test
+    # environment (offscreen platform) genuinely has no GL context. These tests
+    # drive a fake scraper, so declare the real thing available.
+    monkeypatch.setattr(runner_module.webengine, "is_available", lambda: True)
     yield _FakeScraper
     _FakeScraper.instances.clear()
 
@@ -136,3 +140,33 @@ def test_scrape_runner_surfaces_transport_error_without_build(fake_scraper):
     assert len(received) == 1
     assert received[0].status == SnapshotStatus.ERROR
     assert received[0].error == "timeout"
+
+
+def test_scrape_runner_reports_error_when_webengine_is_unavailable(monkeypatch):
+    """Regression for issue #7.
+
+    On a session with no GL context Chromium cannot start. The runner must say
+    so on the provider tile rather than importing WebEngine and taking the
+    process down with it.
+    """
+    _FakeScraper.instances.clear()
+    monkeypatch.setattr(runner_module, "HeadlessScraper", _FakeScraper)
+    monkeypatch.setattr(runner_module.webengine, "is_available", lambda: False)
+    monkeypatch.setattr(
+        runner_module.webengine, "unavailable_reason", lambda: "no GLX/EGL"
+    )
+
+    received: list[UsageSnapshot] = []
+    rn = ScrapeRunner(
+        account_id="claude",
+        url="http://example",
+        extractor_js="",
+        build=lambda payload: _ok_snapshot(),
+        log=logging.getLogger("test"),
+    )
+    rn.run(received.append)
+
+    assert _FakeScraper.instances == [], "no browser should be started"
+    assert len(received) == 1
+    assert received[0].status == SnapshotStatus.ERROR
+    assert "no GLX/EGL" in received[0].error
