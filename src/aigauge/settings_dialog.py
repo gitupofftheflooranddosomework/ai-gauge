@@ -71,6 +71,15 @@ _COPILOT_PLAN_QUOTAS = (
     ("Free", 50),
 )
 
+_SIGN_IN_BROWSER_CHOICES = (
+    ("Ask on next sign-in", "ask"),
+    ("Google Chrome", "chrome"),
+    ("Microsoft Edge", "edge"),
+    ("Brave", "brave"),
+    ("Chromium", "chromium"),
+    ("Embedded browser", "embedded"),
+)
+
 
 _DARK_STYLESHEET = """
 QDialog {
@@ -731,6 +740,19 @@ class SettingsDialog(QDialog):
         general_grid.addWidget(QLabel("UI scale:"), 4, 0)
         general_grid.addLayout(scale_row, 4, 1, 1, 3)
 
+        self.sign_in_browser_combo = QComboBox()
+        self.sign_in_browser_combo.setMinimumWidth(180)
+        self.sign_in_browser_combo.setToolTip(
+            "Choose the isolated browser AI Gauge uses for Claude, Codex, and "
+            "OpenCode sign-in. Automatic import supports Chrome-family browsers; "
+            "embedded sign-in may not support Google or passkeys."
+        )
+        for label, browser_id in _SIGN_IN_BROWSER_CHOICES:
+            self.sign_in_browser_combo.addItem(label, browser_id)
+        self.set_sign_in_browser(getattr(config, "sign_in_browser", "ask"))
+        general_grid.addWidget(QLabel("Sign-in browser:"), 5, 0)
+        general_grid.addWidget(self.sign_in_browser_combo, 5, 1, 1, 3)
+
         # ----- Providers -----
         providers = QGroupBox("Providers")
         providers_layout = QVBoxLayout(providers)
@@ -1318,6 +1340,11 @@ class SettingsDialog(QDialog):
         self.gh_quota.setVisible(is_custom)
         self.gh_quota_label.setVisible(is_custom)
 
+    def set_sign_in_browser(self, browser_id: str) -> None:
+        """Keep the settings draft aligned with a choice made during sign-in."""
+        index = self.sign_in_browser_combo.findData(browser_id)
+        self.sign_in_browser_combo.setCurrentIndex(index if index >= 0 else 0)
+
     def apply_to(self, config: Config) -> None:
         config.refresh_interval_minutes = self.refresh_spin.value()
         config.active_refresh_interval_minutes = min(
@@ -1332,6 +1359,7 @@ class SettingsDialog(QDialog):
         new_ui_scale = float(self.ui_scale_combo.currentData())
         self.ui_scale_changed = abs(new_ui_scale - self._initial_ui_scale) > 1e-3
         config.window.ui_scale = new_ui_scale
+        config.sign_in_browser = str(self.sign_in_browser_combo.currentData())
         accounts = self._current_browser_accounts()
         config.browser_accounts = accounts
         config.providers.claude = self.claude_cb.isChecked()

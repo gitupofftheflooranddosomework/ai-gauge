@@ -12,6 +12,8 @@ from aigauge.webview.external_login import (
     _has_auth_cookie,
     _opencode_workspace_shell_visible,
     _provider_cookies,
+    find_supported_browser,
+    installed_browsers,
 )
 
 
@@ -44,6 +46,22 @@ def test_auth_cookie_detection_handles_codex_split_tokens():
         "claude",
         [{"name": "preference", "value": "x", "domain": ".claude.ai"}],
     )
+
+
+def test_supported_browser_selection_is_explicit(monkeypatch, tmp_path):
+    chrome = tmp_path / "chrome.exe"
+    edge = tmp_path / "msedge.exe"
+    chrome.write_text("browser", encoding="utf-8")
+    edge.write_text("browser", encoding="utf-8")
+    monkeypatch.setattr(
+        external_login,
+        "_browser_candidates",
+        lambda: [("chrome", chrome), ("edge", edge)],
+    )
+
+    assert installed_browsers() == {"chrome": chrome, "edge": edge}
+    assert find_supported_browser("edge") == edge
+    assert find_supported_browser("brave") is None
 
 
 def test_opencode_auth_detection_recognizes_current_session_cookie_only():
@@ -262,6 +280,40 @@ def test_stop_releases_worker_waits_immediately():
     assert worker._stop_event.is_set()  # noqa: SLF001 - lifecycle test seam
 
 
+def test_launcher_exit_does_not_end_a_live_cdp_session(monkeypatch):
+    ready = []
+    failures = []
+    worker = ExternalLoginWorker(
+        "claude",
+        "https://claude.ai/login",
+        "claude",
+        browser_id="edge",
+    )
+
+    class HandedOffProcess:
+        @staticmethod
+        def poll():
+            return 0
+
+    worker._process = HandedOffProcess()  # noqa: SLF001 - process handoff seam
+    worker._debug_port = 43123  # noqa: SLF001 - CDP test seam
+    monkeypatch.setattr(worker, "_discover_websocket", lambda: True)
+    monkeypatch.setattr(
+        worker,
+        "_read_cookies",
+        lambda: [
+            {"name": "sessionKey", "value": "secret", "domain": ".claude.ai"}
+        ],
+    )
+    worker.session_ready.connect(ready.append)
+    worker.failed.connect(failures.append)
+
+    worker._poll_for_session()  # noqa: SLF001 - synchronous polling seam
+
+    assert len(ready) == 1
+    assert failures == []
+
+
 def test_port_reservation_failure_removes_temporary_profile(monkeypatch, tmp_path):
     app_data = tmp_path / "app-data"
     failures = []
@@ -272,7 +324,7 @@ def test_port_reservation_failure_removes_temporary_profile(monkeypatch, tmp_pat
     monkeypatch.setattr(
         external_login,
         "find_supported_browser",
-        lambda: Path("chrome.exe"),
+        lambda browser_id: Path("chrome.exe"),
     )
     monkeypatch.setattr(
         external_login,

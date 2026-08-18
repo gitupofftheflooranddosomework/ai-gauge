@@ -301,6 +301,18 @@ def test_square_corners_setting_applies(qtbot, monkeypatch):
 
     assert config.window.square_corners is True
 
+
+def test_sign_in_browser_setting_applies(qtbot, monkeypatch):
+    monkeypatch.setattr(settings_dialog, "set_start_at_login", lambda enabled: None)
+    config = Config()
+    dialog = SettingsDialog(config)
+    qtbot.addWidget(dialog)
+
+    dialog.set_sign_in_browser("brave")
+    dialog.apply_to(config)
+
+    assert config.sign_in_browser == "brave"
+
 def test_fable_toggle_is_per_claude_account(qtbot, monkeypatch):
     monkeypatch.setattr(settings_dialog, "set_start_at_login", lambda enabled: None)
     config = Config(

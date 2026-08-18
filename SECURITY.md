@@ -78,7 +78,7 @@ test fixtures only; production code paths should never reach this branch.
 
 ## Browser Sign-In
 
-The default sign-in flow launches an installed Chrome-family browser with a
+The default sign-in flow launches the user's selected installed Chrome-family browser with a
 new temporary profile because Google intentionally blocks OAuth in embedded
 user-agents. AI Gauge binds Chrome's DevTools endpoint to a random loopback-only
 port, reads only cookies scoped to the selected provider domain, imports them

@@ -37,6 +37,7 @@ def test_defaults():
     assert c.providers.copilot is True
     assert c.providers.opencode_go is False
     assert c.start_at_login is False
+    assert c.sign_in_browser == "ask"
     assert c.copilot.monthly_quota == 1500
     assert c.opencode_go.usage_url.startswith("https://opencode.ai/workspace/")
     assert c.collapsed_tiles == []
@@ -73,6 +74,7 @@ def test_round_trip(tmp_path, monkeypatch):
     c.active_refresh_interval_minutes = 2
     c.refresh_interval_minutes = 10
     c.start_at_login = True
+    c.sign_in_browser = "brave"
     c.providers.codex = False
     c.browser_accounts[0].show_fable = False
     c.browser_accounts[1].enabled = False
@@ -92,6 +94,7 @@ def test_round_trip(tmp_path, monkeypatch):
     assert loaded.active_refresh_interval_minutes == 2
     assert loaded.refresh_interval_minutes == 10
     assert loaded.start_at_login is True
+    assert loaded.sign_in_browser == "brave"
     assert loaded.providers.codex is False
     assert loaded.browser_accounts[1].enabled is False
     assert loaded.providers.claude is True

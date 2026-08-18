@@ -13,7 +13,17 @@ from __future__ import annotations
 VERIFY_TARGETS = {
     "claude": (
         "https://claude.ai/new#settings/usage",
-        "(() => document.body && document.body.innerText.includes('Plan usage limits'))()",
+        r"""(() => {
+          const text = ((document.body && document.body.innerText) || '').replace(/\s+/g, ' ').trim();
+          const usageVisible = /Plan usage limits|Current session|All models/i.test(text);
+          const authenticatedRoute = location.pathname === '/new' ||
+            location.pathname === '/settings/usage' ||
+            /settings\/usage/i.test(location.hash);
+          const onClaude = location.hostname === 'claude.ai';
+          const claudeShell = document.title.trim().toLowerCase() === 'claude' &&
+            authenticatedRoute && !/\/login(?:\/|$)/i.test(location.pathname);
+          return onClaude && (usageVisible || claudeShell);
+        })()""",
     ),
     "codex": (
         "https://chatgpt.com/codex/cloud/settings/analytics#personal-usage",

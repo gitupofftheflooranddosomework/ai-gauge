@@ -756,6 +756,22 @@ class App(QObject):
             "AIGAUGE_FORCE_WEBENGINE=1 to skip this check.",
         )
 
+    def _remember_sign_in_browser(self, browser_id: str) -> None:
+        if browser_id not in {
+            "ask",
+            "chrome",
+            "edge",
+            "brave",
+            "chromium",
+            "embedded",
+        }:
+            return
+        self._config.sign_in_browser = browser_id
+        self._config.save()
+        update_draft = getattr(self._settings_dialog, "set_sign_in_browser", None)
+        if callable(update_draft):
+            update_draft(browser_id)
+
     def open_login(self, provider: str) -> None:
         draft = self._draft_browser_account(provider)
         kind = draft.kind if draft is not None else account_kind(self._config, provider)
@@ -783,15 +799,25 @@ class App(QObject):
             f"Sign in to {display_name}",
             account_id=provider,
             verify_url=url if kind == "opencode_go" else None,
+            browser_preference=getattr(self._config, "sign_in_browser", "ask"),
         )
+        preference_changed = getattr(dlg, "browser_preference_changed", None)
+        if preference_changed is not None:
+            preference_changed.connect(self._remember_sign_in_browser)
         self._widget.suspend_always_on_top()
         try:
             accepted = bool(dlg.exec())
         finally:
             self._widget.restore_always_on_top()
-        if accepted:
+        session_may_have_changed = bool(
+            getattr(dlg, "session_may_have_changed", False)
+        )
+        if accepted or session_may_have_changed:
             self._cleared_sessions.discard(provider)
-            self.refresh_provider(provider)
+            # Embedded sessions already live in this profile; imported external
+            # cookies commit asynchronously. Either way, refresh now instead of
+            # leaving a valid sign-in stale until the five-minute active timer.
+            QTimer.singleShot(750, lambda: self.refresh_provider(provider))
 
     def open_cookie_paste(self, provider: str) -> None:
         draft = self._draft_browser_account(provider)

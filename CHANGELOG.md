@@ -2,8 +2,22 @@
 
 ## Unreleased
 
+## 0.7.4 - 2026-08-17
+
+### Added
+
+- Added an explicit, remembered sign-in-browser choice for Chrome, Edge, Brave, Chromium, or the embedded browser. First use asks instead of silently choosing Edge, and the preference can be changed under **Settings → General**.
+
+### Fixed
+
+- Fixed the unpredictable sign-in flow reported in [#8](https://github.com/jpajak/ai-gauge/issues/8). Closing or losing an external browser now returns to a clear browser-choice state instead of automatically opening the embedded fallback with a stale failure message.
+- External sign-in now follows the loopback DevTools connection rather than assuming the original launcher process owns the browser window. This keeps Edge and other Chromium process handoffs from being misreported as a closed browser while their real window is still running.
+- Claude verification now recognizes its authenticated app shell as a valid session instead of requiring the usage dialog's exact `Plan usage limits` text. The normal provider refresh remains responsible for opening and reading the usage route, so a successfully signed-in Claude home page is no longer rejected.
+- A session written during sign-in triggers a provider refresh as soon as the dialog closes, even if verification was interrupted. Valid sessions no longer remain stale until the default five-minute active refresh.
+
 ### Changed
 
+- The embedded fallback now watches for provider authentication cookies and verifies automatically; **I'm signed in** remains available for provider cookie-name changes and unusual login flows.
 - When a browser-backed provider is unavailable because no OpenGL context could be created, the tile now names the `AIGAUGE_FORCE_WEBENGINE=1` override. The probe reports whether *Qt* can obtain a context, and there are configurations where Chromium finds one on its own — those users were shown what read as a dead end.
 
 ## 0.7.3 - 2026-08-16

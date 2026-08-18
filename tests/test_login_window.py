@@ -1,5 +1,11 @@
+import json
+import shutil
+import subprocess
+
+import pytest
 from PyQt6.QtCore import QUrl
 
+from aigauge.webview import login_window
 from aigauge.webview.login_window import (
     LoginWindow,
     VERIFY_TARGETS,
@@ -7,6 +13,34 @@ from aigauge.webview.login_window import (
     _is_google_host,
     _safe_url_for_log,
 )
+
+
+def _run_target_js(tmp_path, provider: str, state: dict) -> bool:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js not available")
+    harness = tmp_path / "verify-harness.js"
+    script = tmp_path / "verify-target.js"
+    payload = tmp_path / "verify-state.json"
+    harness.write_text(
+        """
+const fs = require('fs');
+const state = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+global.document = {body: {innerText: state.body}, title: state.title};
+global.location = state.location;
+const result = eval(fs.readFileSync(process.argv[3], 'utf8'));
+process.stdout.write(JSON.stringify(result));
+""",
+        encoding="utf-8",
+    )
+    script.write_text(VERIFY_TARGETS[provider][1], encoding="utf-8")
+    payload.write_text(json.dumps(state), encoding="utf-8")
+    completed = subprocess.run(
+        ["node", str(harness), str(payload), str(script)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return bool(json.loads(completed.stdout))
 
 
 def test_google_hosts_are_detected_and_allowlisted():
@@ -46,6 +80,118 @@ def test_codex_verification_accepts_weekly_only_usage_page():
         """querySelectorAll('button,a,[role="tab"],[role="button"]')""" in check_js
     )
     assert ",div,span,p" not in check_js
+
+
+def test_claude_verification_accepts_authenticated_home_shell(tmp_path):
+    state = {
+        "body": "Afternoon, evan How can I help you today?",
+        "title": "Claude",
+        "location": {
+            "hostname": "claude.ai",
+            "pathname": "/new",
+            "hash": "#settings/usage",
+        },
+    }
+
+    assert _run_target_js(tmp_path, "claude", state)
+
+
+def test_claude_verification_rejects_login_page(tmp_path):
+    state = {
+        "body": "Log in to Claude",
+        "title": "Claude",
+        "location": {
+            "hostname": "claude.ai",
+            "pathname": "/login",
+            "hash": "",
+        },
+    }
+
+    assert not _run_target_js(tmp_path, "claude", state)
+
+
+def test_claude_verification_rejects_usage_text_on_another_host(tmp_path):
+    state = {
+        "body": "Plan usage limits Current session All models",
+        "title": "Claude",
+        "location": {
+            "hostname": "example.com",
+            "pathname": "/new",
+            "hash": "#settings/usage",
+        },
+    }
+
+    assert not _run_target_js(tmp_path, "claude", state)
+
+
+def test_external_failure_returns_to_choice_without_opening_embedded():
+    calls = []
+
+    class Status:
+        def setText(self, value):  # noqa: N802 - Qt-shaped test double
+            calls.append(("status", value))
+
+        def setStyleSheet(self, value):  # noqa: N802 - Qt-shaped test double
+            calls.append(("style", value))
+
+    class Dialog:
+        _closing = False
+        _status = Status()
+
+        def _show_browser_choice(self, message):
+            calls.append(("choice", message))
+
+    LoginWindow._on_external_failed(Dialog(), "browser closed")
+
+    assert ("choice", "browser closed") in calls
+    assert all(name != "embedded" for name, _value in calls)
+
+
+def test_embedded_auth_cookie_schedules_automatic_verification(monkeypatch):
+    timers = []
+
+    class Status:
+        def setText(self, value):  # noqa: N802 - Qt-shaped test double
+            return None
+
+        def setStyleSheet(self, value):  # noqa: N802 - Qt-shaped test double
+            return None
+
+    class Cookie:
+        @staticmethod
+        def name():
+            return b"sessionKey"
+
+        @staticmethod
+        def domain():
+            return ".claude.ai"
+
+    class Dialog:
+        _closing = False
+        _embedded_active = True
+        _provider = "claude"
+        _embedded_auth_seen = False
+        _session_may_have_changed = False
+        _embedded_verify_scheduled = False
+        _verifying = False
+        _status = Status()
+
+        def _verify_after_embedded_cookie(self):
+            return None
+
+    monkeypatch.setattr(
+        login_window.QTimer,
+        "singleShot",
+        lambda delay, callback: timers.append((delay, callback)),
+    )
+    dialog = Dialog()
+
+    LoginWindow._on_embedded_cookie_added(dialog, Cookie())
+
+    assert dialog._embedded_auth_seen is True
+    assert dialog._session_may_have_changed is True
+    assert dialog._embedded_verify_scheduled is True
+    assert timers[0][0] == 1000
 
 
 def test_stopping_external_login_waits_for_worker_cleanup():

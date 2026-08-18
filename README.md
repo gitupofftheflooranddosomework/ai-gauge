@@ -14,7 +14,7 @@ Compact monitor for **Claude.ai**, **ChatGPT Codex**, **OpenCode**, **GitHub Cop
 
 > **Requires Python 3.11+.** Secrets live in the OS-native credential store (Windows Credential Manager / DPAPI, macOS Keychain, Linux Secret Service). Auto-start uses the platform's standard mechanism (Windows Task Scheduler / LaunchAgent / `~/.config/autostart`).
 
-Current version: **0.7.3**. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+Current version: **0.7.4**. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 AI Gauge is an independent open-source project and unofficial local desktop
 utility. It is not affiliated with Anthropic, OpenAI, GitHub, Microsoft,
@@ -84,8 +84,8 @@ On first launch the widget appears with enabled provider tiles. Claude, Codex, a
 
 | Provider           | Setup                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Claude.ai**      | **Sign in (recommended):** opens a real installed Chrome-family browser, supports Google and passkeys, and connects the resulting Claude session automatically. No cookie copying is required. **Paste cookie:** remains available as a recovery fallback. Add extra Claude subscriptions from **Settings → Claude**. |
-| **ChatGPT Codex**  | Same as Claude — **Sign in** opens a real installed browser and automatically connects the ChatGPT session, including Google-linked and passkey accounts. **Paste cookie** remains available only as a fallback. Add extra Codex subscriptions from **Settings → Codex**. |
+| **Claude.ai**      | **Sign in (recommended):** asks which installed Chrome-family browser to use, remembers that choice, supports Google and passkeys, and connects the resulting Claude session automatically. No cookie copying is required. **Paste cookie:** remains available as a recovery fallback. Add extra Claude subscriptions from **Settings → Claude**. |
+| **ChatGPT Codex**  | Same as Claude — **Sign in** uses your chosen installed browser and automatically connects the ChatGPT session, including Google-linked and passkey accounts. **Paste cookie** remains available only as a fallback. Add extra Codex subscriptions from **Settings → Codex**. |
 | **OpenCode**       | In **Settings → OpenCode**, enter each subscription's name and workspace **Go** usage-page URL, then use **Sign in** on that row. Each subscription has an independent browser session and tile. The real-browser flow supports Google; **Paste cookie** remains available as a recovery fallback. Tiles read Rolling, Weekly, and Monthly usage from their workspace pages. |
 | **GitHub Copilot** | Create a **fine-grained PAT** at <https://github.com/settings/personal-access-tokens/new>. For personal plans, add **Account permissions → Plan → Read**. Paste into Settings; set your monthly AI credit allowance (Pro=1,500, Pro+=7,000, Max=20,000). If Copilot is billed through an organization, enter the billing org and use a token/account with org billing access and **Organization permissions → Administration → Read**. |
 | **OpenRouter**     | Create an inference API key at <https://openrouter.ai/keys> and paste it into Settings. To show account balance and model activity, also create a management key at <https://openrouter.ai/settings/provisioning-keys>. Management keys cannot be used for inference; AI Gauge stores it separately and only uses it for OpenRouter management endpoints. Daily spend budget is optional.                                                    |
@@ -104,7 +104,9 @@ the provider's security settings when you need to sign out everywhere.
 ### How browser sign-in works
 
 Google does not allow OAuth sign-in inside embedded browser controls, so AI
-Gauge opens a real installed Chrome-family browser instead. The flow is local:
+Gauge can open Chrome, Edge, Brave, or Chromium instead. On first use it asks
+which one you want and remembers the choice; change it later under **Settings →
+General → Sign-in browser**. The flow is local:
 
 1. AI Gauge creates a new temporary browser profile containing none of your
    regular browser history, extensions, cookies, or saved accounts.
@@ -118,6 +120,13 @@ Gauge opens a real installed Chrome-family browser instead. The flow is local:
    for unrelated sites are ignored.
 5. AI Gauge closes the temporary browser, deletes its temporary profile, and
    verifies that the provider's usage page is signed in.
+
+The small AI Gauge window shown alongside the external browser is a status and
+recovery dialog, not a second active browser. The embedded webview loads only
+when you choose it. If the external browser closes before authentication, AI
+Gauge returns to the browser choice instead of opening the fallback on its own.
+In embedded mode, a recognized session is verified automatically; **I'm signed
+in** remains available as a manual fallback.
 
 Your everyday Chrome/Edge profile is never opened or inspected. The imported
 provider session remains available across AI Gauge restarts, so sign-in only

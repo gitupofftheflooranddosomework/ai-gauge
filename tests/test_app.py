@@ -368,6 +368,45 @@ def test_open_login_uses_unsaved_opencode_account_url(monkeypatch):
     )
     assert kwargs["account_id"] == "opencode_go-work"
     assert kwargs["verify_url"] == "https://opencode.ai/workspace/work/go"
+    assert kwargs["browser_preference"] == "ask"
+
+
+def test_login_refreshes_immediately_when_embedded_session_changed(monkeypatch):
+    refreshed = []
+    timers = []
+
+    class FakeLoginWindow:
+        session_may_have_changed = True
+
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def exec(self):
+            return False
+
+    monkeypatch.setattr(app_module, "LoginWindow", FakeLoginWindow)
+    monkeypatch.setattr(app_module.webengine, "is_available", lambda: True)
+    monkeypatch.setattr(
+        app_module.QTimer,
+        "singleShot",
+        lambda delay, callback: timers.append((delay, callback)),
+    )
+    app = App.__new__(App)
+    app._config = Config()  # noqa: SLF001
+    app._settings_dialog = None  # noqa: SLF001
+    app._cleared_sessions = {"claude"}  # noqa: SLF001
+    app._widget = SimpleNamespace(  # noqa: SLF001
+        suspend_always_on_top=lambda: None,
+        restore_always_on_top=lambda: None,
+    )
+    app.refresh_provider = refreshed.append
+
+    app.open_login("claude")
+
+    assert app._cleared_sessions == set()  # noqa: SLF001
+    assert timers[0][0] == 750
+    timers[0][1]()
+    assert refreshed == ["claude"]
 
 def test_widget_activation_raises_open_settings_dialog():
     app = App.__new__(App)

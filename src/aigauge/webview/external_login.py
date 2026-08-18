@@ -30,9 +30,16 @@ _OPENCODE_PAGE_STATE_JS = r"""
 }))()
 """
 
+BROWSER_LABELS = {
+    "chrome": "Google Chrome",
+    "edge": "Microsoft Edge",
+    "brave": "Brave",
+    "chromium": "Chromium",
+}
 
-def _browser_candidates() -> list[Path]:
-    """Return likely Chrome-family browser executables in preference order."""
+
+def _browser_candidates() -> list[tuple[str, Path]]:
+    """Return likely Chrome-family browser executables with stable identifiers."""
     if sys.platform == "win32":
         roots = [
             os.environ.get("PROGRAMFILES"),
@@ -40,33 +47,63 @@ def _browser_candidates() -> list[Path]:
             os.environ.get("LOCALAPPDATA"),
         ]
         relative = [
-            Path("Google/Chrome/Application/chrome.exe"),
-            Path("Microsoft/Edge/Application/msedge.exe"),
-            Path("Chromium/Application/chrome.exe"),
-            Path("BraveSoftware/Brave-Browser/Application/brave.exe"),
+            ("chrome", Path("Google/Chrome/Application/chrome.exe")),
+            ("edge", Path("Microsoft/Edge/Application/msedge.exe")),
+            ("brave", Path("BraveSoftware/Brave-Browser/Application/brave.exe")),
+            ("chromium", Path("Chromium/Application/chrome.exe")),
         ]
-        return [Path(root) / item for item in relative for root in roots if root]
+        return [
+            (browser_id, Path(root) / item)
+            for browser_id, item in relative
+            for root in roots
+            if root
+        ]
     if sys.platform == "darwin":
         return [
-            Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-            Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
-            Path("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
-            Path("/Applications/Chromium.app/Contents/MacOS/Chromium"),
+            (
+                "chrome",
+                Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            ),
+            (
+                "edge",
+                Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            ),
+            (
+                "brave",
+                Path("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+            ),
+            ("chromium", Path("/Applications/Chromium.app/Contents/MacOS/Chromium")),
         ]
     names = (
-        "google-chrome",
-        "google-chrome-stable",
-        "microsoft-edge",
-        "microsoft-edge-stable",
-        "chromium",
-        "chromium-browser",
-        "brave-browser",
+        ("chrome", "google-chrome"),
+        ("chrome", "google-chrome-stable"),
+        ("edge", "microsoft-edge"),
+        ("edge", "microsoft-edge-stable"),
+        ("brave", "brave-browser"),
+        ("chromium", "chromium"),
+        ("chromium", "chromium-browser"),
     )
-    return [Path(found) for name in names if (found := shutil.which(name))]
+    return [
+        (browser_id, Path(found))
+        for browser_id, name in names
+        if (found := shutil.which(name))
+    ]
 
 
-def find_supported_browser() -> Path | None:
-    return next((path for path in _browser_candidates() if path.is_file()), None)
+def installed_browsers() -> dict[str, Path]:
+    """Return one executable for each installed supported browser."""
+    found: dict[str, Path] = {}
+    for browser_id, path in _browser_candidates():
+        if browser_id not in found and path.is_file():
+            found[browser_id] = path
+    return found
+
+
+def find_supported_browser(browser_id: str | None = None) -> Path | None:
+    browsers = installed_browsers()
+    if browser_id is not None:
+        return browsers.get(browser_id)
+    return next(iter(browsers.values()), None)
 
 
 def _reserve_local_port() -> int:
@@ -141,11 +178,20 @@ class ExternalLoginWorker(QThread):
     session_ready = pyqtSignal(object)
     failed = pyqtSignal(str)
 
-    def __init__(self, provider: str, login_url: str, account_id: str, parent=None):
+    def __init__(
+        self,
+        provider: str,
+        login_url: str,
+        account_id: str,
+        parent=None,
+        *,
+        browser_id: str | None = None,
+    ):
         super().__init__(parent)
         self._provider = provider
         self._login_url = login_url
         self._account_id = account_id
+        self._browser_id = browser_id
         self._process: subprocess.Popen | None = None
         self._debug_port: int | None = None
         self._websocket_url: str | None = None
@@ -153,11 +199,12 @@ class ExternalLoginWorker(QThread):
         self._stop_event = threading.Event()
 
     def run(self) -> None:
-        browser = find_supported_browser()
+        browser = find_supported_browser(self._browser_id)
         if browser is None:
+            selected = BROWSER_LABELS.get(self._browser_id or "", "A supported browser")
             self.failed.emit(
-                "Chrome, Edge, Brave, or Chromium was not found. "
-                "Use the embedded browser or install a supported browser."
+                f"{selected} was not found. Choose another installed browser "
+                "or use the embedded browser."
             )
             return
 
@@ -200,7 +247,8 @@ class ExternalLoginWorker(QThread):
             self._debug_port,
         )
         self.status_changed.emit(
-            f"Finish signing in to {self._provider_name()} in {browser.stem}. "
+            f"Finish signing in to {self._provider_name()} in "
+            f"{BROWSER_LABELS.get(self._browser_id or '', browser.stem)}. "
             "AI Gauge will connect automatically."
         )
 
@@ -219,28 +267,41 @@ class ExternalLoginWorker(QThread):
 
     def _poll_for_session(self) -> None:
         startup_deadline = time.monotonic() + 20
+        process_exit_seen_at: float | None = None
         while not self.isInterruptionRequested() and time.monotonic() < startup_deadline:
             if self._discover_websocket():
                 break
             if self._process is not None and self._process.poll() is not None:
-                self.failed.emit("The browser closed before sign-in completed.")
-                return
+                # Edge and other Chromium launchers can hand the real browser
+                # process off and exit. Give the loopback DevTools endpoint a
+                # grace period before concluding that the window really closed.
+                process_exit_seen_at = process_exit_seen_at or time.monotonic()
+                if time.monotonic() - process_exit_seen_at >= 2:
+                    self.failed.emit("The browser closed before sign-in completed.")
+                    return
             self._stop_event.wait(0.25)
         else:
             if not self.isInterruptionRequested():
                 self.failed.emit("The browser did not start in time.")
             return
 
+        connection_failures = 0
         while not self.isInterruptionRequested():
-            if self._process is not None and self._process.poll() is not None:
-                self.failed.emit("The browser closed before sign-in completed.")
-                return
             try:
                 cookies = self._read_cookies()
             except Exception as exc:  # noqa: BLE001 - transient CDP failures retry
                 log.debug("external sign-in cookie poll failed: %s", exc)
+                self._websocket_url = None
+                if self._discover_websocket():
+                    connection_failures = 0
+                else:
+                    connection_failures += 1
+                    if connection_failures >= 3:
+                        self.failed.emit("The browser closed before sign-in completed.")
+                        return
                 self._stop_event.wait(0.75)
                 continue
+            connection_failures = 0
             relevant = _provider_cookies(self._provider, cookies)
             if self._session_is_ready(relevant):
                 log.info(

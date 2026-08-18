@@ -4,7 +4,7 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import keyring
 from pydantic import BaseModel, Field
@@ -165,6 +165,12 @@ class Config(BaseModel):
     active_refresh_interval_minutes: int = Field(default=5, ge=1, le=180)
     refresh_interval_minutes: int = Field(default=60, ge=1, le=180)
     start_at_login: bool = False
+    # Automatic cookie import requires Chromium's DevTools protocol, so the
+    # chosen executable must be explicit rather than silently treating Edge as
+    # the system default. "ask" is replaced with the user's first selection.
+    sign_in_browser: Literal[
+        "ask", "chrome", "edge", "brave", "chromium", "embedded"
+    ] = "ask"
     providers: ProviderToggles = Field(default_factory=ProviderToggles)
     browser_accounts: list[BrowserAccount] = Field(
         default_factory=lambda: [
