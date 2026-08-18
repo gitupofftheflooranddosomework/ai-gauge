@@ -34,6 +34,9 @@ COOKIE_NAMES = {
     "codex": "next-auth.session-token",
     "opencode_go": "auth",
 }
+
+SnapCorner = Literal["top_left", "top_right", "bottom_left", "bottom_right"]
+
 COOKIE_NAME_ALIASES = {
     "claude": ("sessionKey",),
     "codex": (
@@ -92,7 +95,10 @@ class WindowState(BaseModel):
     height: int = Field(default=220, ge=WINDOW_MIN_HEIGHT, le=WINDOW_MAX_HEIGHT)
     manually_resized: bool = False
     collapsed: bool = False
+    show_header: bool = True
     always_on_top: bool = True
+    snap_to_corners: bool = True
+    snap_corner: SnapCorner | None = None
     opacity: float = Field(default=0.8, ge=0.3, le=1.0)
     fade_when_inactive: bool = False
     # Draw the panel with square corners instead of an 8px radius. Rounded

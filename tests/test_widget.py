@@ -17,6 +17,8 @@ from aigauge.config import (
 from aigauge.models import SnapshotStatus, UsageMetric, UsageSnapshot
 from aigauge.ratio import RatioEstimate
 from aigauge.widget import (
+    CORNER_SNAP_DISTANCE,
+    CORNER_SNAP_INSET,
     PANEL_BG,
     UsageWidget,
     _format_ratio_inline,
@@ -91,6 +93,63 @@ def test_offscreen_saved_position_is_clamped_on_screen(qtbot):
     assert widget.y() + widget.height() <= geo.bottom() + 1
 
 
+def test_window_snaps_near_corner_and_anchor_survives_layout_changes(qtbot):
+    geo = QApplication.primaryScreen().availableGeometry()
+    config = Config()
+    widget = UsageWidget(config)
+    qtbot.addWidget(widget)
+    widget.update_snapshot(_ok_snapshot("codex"), "Codex")
+    widget._do_refit_height()  # noqa: SLF001
+
+    widget.move(
+        geo.right() - widget.width() + 1 - CORNER_SNAP_DISTANCE // 2,
+        geo.bottom() - widget.height() + 1 - CORNER_SNAP_DISTANCE // 2,
+    )
+    widget._update_snap_anchor_from_position(geo.bottomRight())  # noqa: SLF001
+
+    assert config.window.snap_corner == "bottom_right"
+    assert widget.x() + widget.width() - 1 == geo.right() - CORNER_SNAP_INSET
+    assert widget.y() + widget.height() - 1 == geo.bottom() - CORNER_SNAP_INSET
+
+    widget.set_header_visible(False)
+    assert widget.x() + widget.width() - 1 == geo.right() - CORNER_SNAP_INSET
+    assert widget.y() + widget.height() - 1 == geo.bottom() - CORNER_SNAP_INSET
+
+    widget.set_collapsed(True)
+    assert widget.x() + widget.width() - 1 == geo.right() - CORNER_SNAP_INSET
+    assert widget.y() + widget.height() - 1 == geo.bottom() - CORNER_SNAP_INSET
+
+
+def test_moving_away_or_disabling_snap_releases_corner_anchor(qtbot):
+    geo = QApplication.primaryScreen().availableGeometry()
+    config = Config()
+    config.window.snap_corner = "top_left"
+    widget = UsageWidget(config)
+    qtbot.addWidget(widget)
+
+    assert widget.pos() == QPoint(
+        geo.left() + CORNER_SNAP_INSET,
+        geo.top() + CORNER_SNAP_INSET,
+    )
+
+    center = geo.center()
+    widget.move(
+        center.x() - widget.width() // 2,
+        center.y() - widget.height() // 2,
+    )
+    widget._update_snap_anchor_from_position(center)  # noqa: SLF001
+    assert config.window.snap_corner is None
+
+    config.window.snap_corner = "top_left"
+    widget._apply_snap_anchor()  # noqa: SLF001
+    anchored_position = widget.pos()
+    widget.set_snap_to_corners(False)
+
+    assert config.window.snap_to_corners is False
+    assert config.window.snap_corner is None
+    assert widget.pos() == anchored_position
+
+
 def test_title_bars_offer_distinct_view_and_hide_controls(qtbot):
     widget = UsageWidget(Config())
     qtbot.addWidget(widget)
@@ -117,6 +176,47 @@ def test_title_bars_offer_distinct_view_and_hide_controls(qtbot):
     qtbot.waitUntil(widget.isVisible)
     widget._collapsed_hide_btn.click()  # noqa: SLF001
     assert widget.isHidden()
+
+
+def test_header_visibility_is_independent_of_content_density(qtbot):
+    config = Config()
+    widget = UsageWidget(config)
+    qtbot.addWidget(widget)
+    widget.update_snapshot(_ok_snapshot("codex"), "Codex")
+    widget._do_refit_height()  # noqa: SLF001
+    height_with_header = widget.height()
+
+    widget.set_header_visible(False)
+    widget._do_refit_height()  # noqa: SLF001
+
+    assert config.window.show_header is False
+    assert widget._header_widget.isHidden()  # noqa: SLF001
+    assert widget.height() < height_with_header
+    assert not widget._tile_scroll.isHidden()  # noqa: SLF001
+
+    widget.set_collapsed(True)
+    assert not widget._collapsed_widget.isHidden()  # noqa: SLF001
+    assert widget._collapsed_header_widget.isHidden()  # noqa: SLF001
+    assert _collapsed_chip_texts(widget)
+
+    widget.set_header_visible(True)
+    assert config.window.show_header is True
+    assert not widget._collapsed_header_widget.isHidden()  # noqa: SLF001
+    assert widget._header_widget.isHidden()  # noqa: SLF001
+
+    widget.set_collapsed(False)
+    assert not widget._header_widget.isHidden()  # noqa: SLF001
+    assert widget._collapsed_header_widget.isHidden()  # noqa: SLF001
+
+
+def test_context_menu_topmost_toggle_persists(qtbot):
+    config = Config()
+    widget = UsageWidget(config)
+    qtbot.addWidget(widget)
+
+    widget.set_always_on_top(False)
+
+    assert config.window.always_on_top is False
 
 
 def test_reenabled_provider_returns_to_canonical_order(qtbot):

@@ -48,6 +48,7 @@ from . import __version__
 from .config import (
     ColorThresholds,
     Config,
+    SnapCorner,
     WINDOW_COLLAPSED_HEIGHT,
     WINDOW_COLLAPSED_MIN_WIDTH,
     WINDOW_MAX_HEIGHT,
@@ -83,6 +84,8 @@ COLLAPSED_MIN_WIDTH = WINDOW_COLLAPSED_MIN_WIDTH
 PANEL_BG = "#111827"
 PANEL_BORDER = "#1f2937"
 PANEL_CORNER_RADIUS = 8
+CORNER_SNAP_DISTANCE = 16
+CORNER_SNAP_INSET = 4
 
 
 def _clamp_height(value: int) -> int:
@@ -1556,6 +1559,7 @@ class UsageWidget(QWidget):
         self._cadence_full_text = ""
         self._cadence_short_text = ""
         self._collapsed = config.window.collapsed
+        self._header_visible = config.window.show_header
         self._always_on_top_suspensions = 0
         self._collapsed_chip_max_width = 0
         self._grip_overlaid = False
@@ -1645,7 +1649,8 @@ class UsageWidget(QWidget):
         collapsed_outer.setContentsMargins(8, 4, 8, 6)
         collapsed_outer.setSpacing(4)
 
-        collapsed_header = QHBoxLayout()
+        self._collapsed_header_widget = QWidget(self._collapsed_widget)
+        collapsed_header = QHBoxLayout(self._collapsed_header_widget)
         self._collapsed_header_layout = collapsed_header
         collapsed_header.setContentsMargins(0, 0, 0, 0)
         collapsed_header.setSpacing(4)
@@ -1674,7 +1679,7 @@ class UsageWidget(QWidget):
         self._collapsed_summary_layout.setSpacing(3)
         self._collapsed_summary_layout.addWidget(self._collapsed_label)
 
-        collapsed_outer.addLayout(collapsed_header)
+        collapsed_outer.addWidget(self._collapsed_header_widget)
         collapsed_outer.addLayout(self._collapsed_summary_layout)
 
         self._tile_container = QWidget(self)
@@ -1914,6 +1919,15 @@ class UsageWidget(QWidget):
         previous responsive pass may have already shortened it, which would
         otherwise make the floor drift with whatever was last displayed.
         """
+        if not self._header_visible:
+            return max(
+                COLLAPSED_MIN_WIDTH,
+                min(
+                    WINDOW_MAX_WIDTH,
+                    self._collapsed_chip_max_width + self._collapsed_chrome_width(),
+                ),
+            )
+
         title = self._collapsed_title.text()
         cadence_visible = not self._collapsed_cadence_label.isHidden()
         age_visible = not self._collapsed_age_label.isHidden()
@@ -1971,8 +1985,12 @@ class UsageWidget(QWidget):
         the "Xs ago" stamp, then the cadence, then the name — leaving the icon
         and the three buttons, which always stay.
         """
+        if not self._header_visible:
+            return
+
         layout = self._collapsed_header_layout
         available = self.width() - self._collapsed_chrome_width()
+        at_width_floor = self.width() <= self._minimum_collapsed_width()
 
         def overflows() -> bool:
             layout.invalidate()
@@ -1990,7 +2008,7 @@ class UsageWidget(QWidget):
             self._collapsed_age_label.hide()
         if overflows() and not self._collapsed_cadence_label.isHidden():
             self._collapsed_cadence_label.hide()
-        if overflows():
+        if overflows() or at_width_floor:
             self._collapsed_title.setText("")
         layout.invalidate()
         layout.activate()
@@ -2035,6 +2053,7 @@ class UsageWidget(QWidget):
             )
             self.setFixedHeight(target_height)
             self._position_overlaid_grip()
+            self._restore_position_after_refit()
             return
 
         # Release the collapsed/fitted constraints before measuring this pass.
@@ -2056,7 +2075,9 @@ class UsageWidget(QWidget):
         self.updateGeometry()
         self.layout().invalidate()
         self.layout().activate()
-        header_height = self._header_widget.sizeHint().height()
+        header_height = (
+            self._header_widget.sizeHint().height() if self._header_visible else 0
+        )
         footer_height = self._resize_footer.sizeHint().height()
         tile_height = self._tile_container.sizeHint().height()
         height_limit = self._available_expanded_height()
@@ -2078,7 +2099,7 @@ class UsageWidget(QWidget):
         self.setFixedHeight(fitted_height)
         if self.width() != target_width:
             self.resize(target_width, fitted_height)
-        self._clamp_to_visible_screen()
+        self._restore_position_after_refit()
 
     def set_refreshing(self, refreshing: bool) -> None:
         self.refresh_btn.setEnabled(not refreshing)
@@ -2336,12 +2357,26 @@ class UsageWidget(QWidget):
             self._save_expanded_width()
         self._collapsed = collapsed
         self._config.window.collapsed = collapsed
-        self._config.save()
+        self._apply_collapsed_state(save=True)
+
+    def set_header_visible(self, visible: bool) -> None:
+        """Show or hide the controls header without changing content density."""
+        if self._header_visible == visible:
+            return
+        self._header_visible = visible
+        self._config.window.show_header = visible
         self._apply_collapsed_state(save=False)
+        self._config.save()
+
+    def _apply_header_visibility(self) -> None:
+        self._header_widget.setVisible(not self._collapsed and self._header_visible)
+        self._collapsed_header_widget.setVisible(
+            self._collapsed and self._header_visible
+        )
 
     def _apply_collapsed_state(self, *, save: bool) -> None:
         self._collapsed_widget.setVisible(self._collapsed)
-        self._header_widget.setVisible(not self._collapsed)
+        self._apply_header_visibility()
         self._tile_scroll.setVisible(not self._collapsed)
         self._tile_container.setVisible(not self._collapsed)
         self._resize_footer.setVisible(not self._collapsed)
@@ -2366,7 +2401,7 @@ class UsageWidget(QWidget):
             )
             self.resize(target_width, WINDOW_MIN_HEIGHT)
             self._refit_height()
-        self._clamp_to_visible_screen()
+        self._restore_position_after_refit()
         if save:
             self._config.window.collapsed = self._collapsed
             self._config.save()
@@ -2404,6 +2439,26 @@ class UsageWidget(QWidget):
             updated_flags &= ~Qt.WindowType.WindowStaysOnTopHint
         if updated_flags != flags:
             self.setWindowFlags(updated_flags)
+
+    def set_always_on_top(self, on: bool) -> None:
+        """Persist and apply the user's topmost preference."""
+        if self._config.window.always_on_top == on:
+            return
+        self._config.window.always_on_top = on
+        self._config.save()
+        self._set_suspended_topmost(on and not self._always_on_top_suspensions)
+
+    def set_snap_to_corners(self, on: bool) -> None:
+        """Persist corner snapping and release any anchor when it is disabled."""
+        if self._config.window.snap_to_corners == on:
+            return
+        self._config.window.snap_to_corners = on
+        if on:
+            self._update_snap_anchor_from_position()
+        else:
+            self._config.window.snap_corner = None
+            self._remember_position()
+        self._config.save()
 
     def _set_native_topmost(self, on: bool) -> bool:
         """Toggle Windows topmost state without recreating the Qt window."""
@@ -2474,12 +2529,113 @@ class UsageWidget(QWidget):
             self._config.window.always_on_top and not self._always_on_top_suspensions
         )
         self._collapsed = self._config.window.collapsed
+        self._header_visible = self._config.window.show_header
         self._apply_collapsed_state(save=False)
         self._apply_corner_mask()
         self.update()
         if was_visible:
             self.show()  # re-applying flags hides the window
             self._apply_window_opacity()
+
+    def _is_popup_window(self) -> bool:
+        window_type = self.windowFlags() & Qt.WindowType.WindowType_Mask
+        return window_type == Qt.WindowType.Popup
+
+    def _screen_for_position(self, point: QPoint | None = None):
+        # A release point expresses the destination screen during a drag. For
+        # automatic refits, prefer the existing top-left: a right-anchored pill
+        # can temporarily grow across a monitor boundary before it is moved
+        # back, making its frame center identify the wrong screen.
+        candidates = [point, self.pos(), self.frameGeometry().center()]
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            screen = QApplication.screenAt(candidate)
+            if screen is not None:
+                return screen
+        return self.screen() or QApplication.primaryScreen()
+
+    def _corner_near_current_position(self, screen) -> SnapCorner | None:
+        geo = screen.availableGeometry()
+        left_gap = abs(self.x() - geo.left())
+        right_gap = abs(self.x() + self.width() - 1 - geo.right())
+        top_gap = abs(self.y() - geo.top())
+        bottom_gap = abs(self.y() + self.height() - 1 - geo.bottom())
+
+        horizontal, horizontal_gap = min(
+            (("left", left_gap), ("right", right_gap)),
+            key=lambda item: item[1],
+        )
+        vertical, vertical_gap = min(
+            (("top", top_gap), ("bottom", bottom_gap)),
+            key=lambda item: item[1],
+        )
+        if max(horizontal_gap, vertical_gap) > CORNER_SNAP_DISTANCE:
+            return None
+        corners: dict[tuple[str, str], SnapCorner] = {
+            ("top", "left"): "top_left",
+            ("top", "right"): "top_right",
+            ("bottom", "left"): "bottom_left",
+            ("bottom", "right"): "bottom_right",
+        }
+        return corners[(vertical, horizontal)]
+
+    def _snap_target(self, corner: SnapCorner, screen) -> QPoint:
+        geo = screen.availableGeometry()
+        max_x = max(geo.left(), geo.right() - self.width() + 1)
+        max_y = max(geo.top(), geo.bottom() - self.height() + 1)
+        left_x = min(max_x, geo.left() + CORNER_SNAP_INSET)
+        right_x = max(geo.left(), max_x - CORNER_SNAP_INSET)
+        top_y = min(max_y, geo.top() + CORNER_SNAP_INSET)
+        bottom_y = max(geo.top(), max_y - CORNER_SNAP_INSET)
+        x = left_x if corner.endswith("left") else right_x
+        y = top_y if corner.startswith("top") else bottom_y
+        return QPoint(x, y)
+
+    def _remember_position(self) -> None:
+        self._config.window.x = self.x()
+        self._config.window.y = self.y()
+
+    def _apply_snap_anchor(self, screen=None) -> bool:
+        corner = self._config.window.snap_corner
+        if (
+            not self._config.window.snap_to_corners
+            or corner is None
+            or self._drag_offset is not None
+            or self._is_popup_window()
+        ):
+            return False
+        screen = screen or self._screen_for_position()
+        if screen is None:
+            return False
+        target = self._snap_target(corner, screen)
+        if self.pos() != target:
+            self.move(target)
+        self._remember_position()
+        return True
+
+    def _restore_position_after_refit(self) -> None:
+        if self._drag_offset is not None:
+            return
+        if not self._apply_snap_anchor():
+            self._clamp_to_visible_screen()
+            self._remember_position()
+
+    def _update_snap_anchor_from_position(self, point: QPoint | None = None) -> None:
+        if self._is_popup_window():
+            return
+        if not self._config.window.snap_to_corners:
+            self._config.window.snap_corner = None
+            self._clamp_to_visible_screen()
+            self._remember_position()
+            return
+        screen = self._screen_for_position(point)
+        if screen is None:
+            return
+        self._config.window.snap_corner = self._corner_near_current_position(screen)
+        if not self._apply_snap_anchor(screen):
+            self._clamp_to_visible_screen()
+            self._remember_position()
 
     def _clamp_to_visible_screen(self) -> None:
         """Pull the window fully onto a visible screen.
@@ -2512,9 +2668,9 @@ class UsageWidget(QWidget):
 
     def showEvent(self, event):  # noqa: N802
         # A DPI/scale or monitor change can happen while the widget is hidden;
-        # re-clamp on every show so it can never come back off-screen.
+        # restore its corner anchor or clamp it on every show.
         super().showEvent(event)
-        self._clamp_to_visible_screen()
+        self._restore_position_after_refit()
         self._apply_window_opacity()
         self._apply_corner_mask()
 
@@ -2625,19 +2781,27 @@ class UsageWidget(QWidget):
             event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        self._drag_offset = None
-        self._apply_window_opacity()
+        if event.button() != Qt.MouseButton.LeftButton or self._drag_offset is None:
+            super().mouseReleaseEvent(event)
+            return
+        release_point = event.globalPosition().toPoint()
+        # Refit while the drag marker is still set so an old anchor cannot pull
+        # the window back before the release position is evaluated.
         self._do_refit_height()
+        self._drag_offset = None
+        self._update_snap_anchor_from_position(release_point)
+        self._apply_window_opacity()
         # Persist position
-        self._config.window.x = self.x()
-        self._config.window.y = self.y()
+        self._remember_position()
         self._config.window.collapsed = self._collapsed
         self._save_expanded_width()
         self._save_collapsed_width()
         self._config.save()
+        event.accept()
 
     def closeEvent(self, event):  # noqa: N802
         self._do_refit_height()
+        self._remember_position()
         self._config.window.collapsed = self._collapsed
         self._save_expanded_width()
         self._save_collapsed_width()

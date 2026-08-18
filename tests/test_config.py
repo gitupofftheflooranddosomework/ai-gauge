@@ -43,6 +43,9 @@ def test_defaults():
     assert c.collapsed_tiles == []
     assert c.window.always_on_top is True
     assert c.window.collapsed is False
+    assert c.window.show_header is True
+    assert c.window.snap_to_corners is True
+    assert c.window.snap_corner is None
     assert c.window.fade_when_inactive is False
     assert c.window.opacity == 0.8
     assert c.window.ui_scale == 1.0
@@ -83,6 +86,8 @@ def test_round_trip(tmp_path, monkeypatch):
     c.copilot.monthly_quota = 1500
     c.window.x = 100
     c.window.y = 200
+    c.window.show_header = False
+    c.window.snap_corner = "bottom_right"
     c.providers.opencode_go = True
     browser_account(c, "opencode_go").usage_url = (
         "https://opencode.ai/workspace/test/go"
@@ -110,6 +115,9 @@ def test_round_trip(tmp_path, monkeypatch):
         == "https://opencode.ai/workspace/test/go"
     )
     assert loaded.collapsed_tiles == ["claude"]
+    assert loaded.window.show_header is False
+    assert loaded.window.snap_to_corners is True
+    assert loaded.window.snap_corner == "bottom_right"
 
 def test_load_missing_returns_defaults():
     c = Config.load()

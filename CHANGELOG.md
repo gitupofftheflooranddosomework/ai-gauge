@@ -7,6 +7,7 @@
 ### Added
 
 - Added an explicit, remembered sign-in-browser choice for Chrome, Edge, Brave, Chromium, or the embedded browser. First use asks instead of silently choosing Edge, and the preference can be changed under **Settings → General**.
+- Added the window context menu requested in [#9](https://github.com/jpajak/ai-gauge/issues/9), even when a system tray is available. **Compact view**, **Show header**, **Always on top**, and **Snap to corners** are independent, remembered choices, while Refresh, Settings, window visibility, and Quit remain available when the header is hidden. Moving the floating widget near a screen corner anchors it there through content and layout size changes; dragging it away or disabling snapping releases the anchor.
 
 ### Fixed
 

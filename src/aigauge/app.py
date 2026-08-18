@@ -273,6 +273,7 @@ class App(QObject):
             self._ui_mode = "floating_widget"
 
         self._app_menu = self._build_app_menu()
+        self._install_widget_context_menu()
         self._native_status = None
 
         if self._ui_mode == "menubar":
@@ -309,10 +310,6 @@ class App(QObject):
             self._tray.show()
         else:
             self._tray = None
-            self._widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            self._widget.customContextMenuRequested.connect(
-                lambda pos: self._app_menu.exec(self._widget.mapToGlobal(pos))
-            )
 
         # Auto-refresh timer
         self._timer = QTimer(self)
@@ -718,7 +715,31 @@ class App(QObject):
 
     def _build_app_menu(self) -> QMenu:
         menu = QMenu()
-        menu.addAction("Show / Hide", self._toggle_widget)
+
+        self._compact_view_action = QAction("Compact view", menu)
+        self._compact_view_action.setCheckable(True)
+        self._compact_view_action.triggered.connect(self._widget.set_collapsed)
+        menu.addAction(self._compact_view_action)
+
+        self._show_header_action = QAction("Show header", menu)
+        self._show_header_action.setCheckable(True)
+        self._show_header_action.triggered.connect(self._widget.set_header_visible)
+        menu.addAction(self._show_header_action)
+
+        self._always_on_top_action = QAction("Always on top", menu)
+        self._always_on_top_action.setCheckable(True)
+        self._always_on_top_action.triggered.connect(self._widget.set_always_on_top)
+        menu.addAction(self._always_on_top_action)
+
+        self._snap_to_corners_action = QAction("Snap to corners", menu)
+        self._snap_to_corners_action.setCheckable(True)
+        self._snap_to_corners_action.triggered.connect(
+            self._widget.set_snap_to_corners
+        )
+        menu.addAction(self._snap_to_corners_action)
+
+        menu.addSeparator()
+        self._show_hide_action = menu.addAction("Hide window", self._toggle_widget)
         refresh_act = menu.addAction("Refresh now")
         refresh_act.triggered.connect(lambda: self.refresh_now(manual=True))
         menu.addAction("Settings…", self.open_settings)
@@ -726,7 +747,33 @@ class App(QObject):
         quit_act = QAction("Quit", menu)
         quit_act.triggered.connect(QApplication.instance().quit)
         menu.addAction(quit_act)
+        menu.aboutToShow.connect(self._sync_app_menu_actions)
+        self._sync_app_menu_actions()
         return menu
+
+    def _install_widget_context_menu(self) -> None:
+        """Expose the app menu from the widget even when a tray is available."""
+        self._widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._widget.customContextMenuRequested.connect(
+            self._show_widget_context_menu
+        )
+
+    def _show_widget_context_menu(self, pos: QPoint) -> None:
+        self._app_menu.exec(self._widget.mapToGlobal(pos))
+
+    def _sync_app_menu_actions(self) -> None:
+        self._compact_view_action.setChecked(self._config.window.collapsed)
+        self._show_header_action.setChecked(self._config.window.show_header)
+        self._always_on_top_action.setChecked(self._config.window.always_on_top)
+        self._snap_to_corners_action.setChecked(
+            self._config.window.snap_to_corners
+        )
+        self._snap_to_corners_action.setVisible(
+            getattr(self, "_ui_mode", "floating_widget") == "floating_widget"
+        )
+        self._show_hide_action.setText(
+            "Hide window" if self._widget.isVisible() else "Show window"
+        )
 
     def _render_tray_icon(self) -> QIcon:
         if self._ui_mode == "menubar":

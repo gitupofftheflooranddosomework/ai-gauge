@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QMessageBox
 
 from aigauge import app as app_module
@@ -15,6 +16,7 @@ from aigauge.app import (
 )
 from aigauge.config import BrowserAccount, Config
 from aigauge.models import SnapshotStatus, UsageMetric, UsageSnapshot
+from aigauge.widget import UsageWidget
 
 
 class _Timer:
@@ -416,6 +418,46 @@ def test_widget_activation_raises_open_settings_dialog():
     app._on_widget_activated()  # noqa: SLF001
 
     assert dialog.calls == ["show", "raise", "activate"]
+
+
+def test_app_menu_controls_widget_view_and_is_available_on_widget(qtbot):
+    config = Config()
+    widget = UsageWidget(config)
+    qtbot.addWidget(widget)
+    app = App.__new__(App)
+    app._config = config  # noqa: SLF001
+    app._widget = widget  # noqa: SLF001
+    app._ui_mode = "floating_widget"  # noqa: SLF001
+    app._toggle_widget = lambda: None  # noqa: SLF001
+    app.refresh_now = lambda *, manual: None
+    app.open_settings = lambda: None
+
+    menu = app._build_app_menu()  # noqa: SLF001
+    qtbot.addWidget(menu)
+    app._app_menu = menu  # noqa: SLF001
+    app._install_widget_context_menu()  # noqa: SLF001
+
+    assert widget.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
+    assert app._compact_view_action.isChecked() is False  # noqa: SLF001
+    assert app._show_header_action.isChecked() is True  # noqa: SLF001
+    assert app._always_on_top_action.isChecked() is True  # noqa: SLF001
+    assert app._snap_to_corners_action.isChecked() is True  # noqa: SLF001
+
+    app._compact_view_action.trigger()  # noqa: SLF001
+    app._show_header_action.trigger()  # noqa: SLF001
+    app._always_on_top_action.trigger()  # noqa: SLF001
+    app._snap_to_corners_action.trigger()  # noqa: SLF001
+
+    assert config.window.collapsed is True
+    assert config.window.show_header is False
+    assert config.window.always_on_top is False
+    assert config.window.snap_to_corners is False
+
+    widget.set_collapsed(False)
+    widget.set_header_visible(True)
+    app._sync_app_menu_actions()  # noqa: SLF001
+    assert app._compact_view_action.isChecked() is False  # noqa: SLF001
+    assert app._show_header_action.isChecked() is True  # noqa: SLF001
 
 
 def test_settings_leaves_widget_topmost_state_unchanged(monkeypatch):
