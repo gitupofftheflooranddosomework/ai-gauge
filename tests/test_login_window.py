@@ -4,6 +4,7 @@ import subprocess
 
 import pytest
 from PyQt6.QtCore import QUrl
+from PyQt6.QtWidgets import QPushButton
 
 from aigauge.webview import login_window
 from aigauge.webview.login_window import (
@@ -58,6 +59,7 @@ def test_logged_blocked_url_drops_query_and_fragment():
 
     assert _safe_url_for_log(url) == "https://accounts.google.com/o/oauth2/v2/auth"
 
+
 def test_opencode_go_has_verify_target():
     url, check_js = VERIFY_TARGETS["opencode_go"]
 
@@ -84,8 +86,11 @@ def test_codex_verification_accepts_weekly_only_usage_page():
 
 def test_claude_verification_accepts_authenticated_home_shell(tmp_path):
     state = {
-        "body": "Afternoon, evan How can I help you today?",
-        "title": "Claude",
+        "body": (
+            "Home Code New Projects Artifacts Scheduled Customize Chats and tasks "
+            "How can I help you today? John Max"
+        ),
+        "title": "New chat - Claude",
         "location": {
             "hostname": "claude.ai",
             "pathname": "/new",
@@ -94,6 +99,20 @@ def test_claude_verification_accepts_authenticated_home_shell(tmp_path):
     }
 
     assert _run_target_js(tmp_path, "claude", state)
+
+
+def test_claude_verification_rejects_login_ui_on_authenticated_route(tmp_path):
+    state = {
+        "body": "Log in to Claude Continue with Google Create an account",
+        "title": "Claude",
+        "location": {
+            "hostname": "claude.ai",
+            "pathname": "/new",
+            "hash": "#settings/usage",
+        },
+    }
+
+    assert not _run_target_js(tmp_path, "claude", state)
 
 
 def test_claude_verification_rejects_login_page(tmp_path):
@@ -147,6 +166,31 @@ def test_external_failure_returns_to_choice_without_opening_embedded():
     assert all(name != "embedded" for name, _value in calls)
 
 
+def test_visible_page_owns_the_dialog_default_action(qtbot):
+    continue_btn = QPushButton("Continue")
+    verify_btn = QPushButton("I'm signed in")
+    qtbot.addWidget(continue_btn)
+    qtbot.addWidget(verify_btn)
+
+    class Dialog:
+        _continue_btn = continue_btn
+        _verify_btn = verify_btn
+
+    dialog = Dialog()
+
+    LoginWindow._set_default_action(dialog, continue_btn)
+    assert continue_btn.isDefault()
+    assert not verify_btn.isDefault()
+
+    LoginWindow._set_default_action(dialog, verify_btn)
+    assert not continue_btn.isDefault()
+    assert verify_btn.isDefault()
+
+    LoginWindow._set_default_action(dialog, None)
+    assert not continue_btn.isDefault()
+    assert not verify_btn.isDefault()
+
+
 def test_embedded_auth_cookie_schedules_automatic_verification(monkeypatch):
     timers = []
 
@@ -174,7 +218,12 @@ def test_embedded_auth_cookie_schedules_automatic_verification(monkeypatch):
         _session_may_have_changed = False
         _embedded_verify_scheduled = False
         _verifying = False
-        _status = Status()
+        _embedded_status = Status()
+
+        @staticmethod
+        def _set_label_status(label, text, color):
+            label.setText(text)
+            label.setStyleSheet(color)
 
         def _verify_after_embedded_cookie(self):
             return None
@@ -192,6 +241,51 @@ def test_embedded_auth_cookie_schedules_automatic_verification(monkeypatch):
     assert dialog._session_may_have_changed is True
     assert dialog._embedded_verify_scheduled is True
     assert timers[0][0] == 1000
+
+
+def test_authenticated_embedded_shell_closes_without_manual_verification(monkeypatch):
+    timers = []
+    accepted = []
+
+    class Status:
+        def setText(self, value):  # noqa: N802 - Qt-shaped test double
+            return None
+
+        def setStyleSheet(self, value):  # noqa: N802 - Qt-shaped test double
+            return None
+
+    class Dialog:
+        _closing = False
+        _embedded_active = True
+        _embedded_auth_seen = False
+        _session_may_have_changed = False
+        _embedded_verify_scheduled = False
+        _verifying = False
+        _embedded_status = Status()
+
+        @staticmethod
+        def _set_label_status(label, text, color):
+            label.setText(text)
+            label.setStyleSheet(color)
+
+        def _accept_embedded_session(self):
+            accepted.append(True)
+
+    monkeypatch.setattr(
+        login_window.QTimer,
+        "singleShot",
+        lambda delay, callback: timers.append((delay, callback)),
+    )
+    dialog = Dialog()
+
+    LoginWindow._on_embedded_shell_result(dialog, True)
+
+    assert dialog._embedded_auth_seen is True
+    assert dialog._session_may_have_changed is True
+    assert dialog._embedded_verify_scheduled is True
+    assert timers[0][0] == 250
+    timers[0][1]()
+    assert accepted == [True]
 
 
 def test_stopping_external_login_waits_for_worker_cleanup():

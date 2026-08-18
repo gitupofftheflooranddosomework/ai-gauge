@@ -8,10 +8,14 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 from .cookies import import_browser_cookies
@@ -30,6 +34,49 @@ from .verify import (
 )  # noqa: F401 - VERIFY_TARGETS re-exported for callers
 
 log = logging.getLogger("aigauge.webview.login")
+
+_MAX_WIDGET_SIZE = 16777215
+
+_LOGIN_STYLESHEET = """
+QDialog { background:#1f2937; color:#e5e7eb; }
+QWidget#loginPage { background:#1f2937; }
+QLabel { color:#e5e7eb; background:transparent; }
+QLabel#heading { font-size:15px; font-weight:600; }
+QLabel#secondary { color:#9ca3af; font-size:11px; }
+QLabel#status { color:#9ca3af; font-size:11px; }
+QLabel#error { color:#ef4444; font-size:11px; }
+QFrame#browserCard {
+    background:#111827; border:1px solid #374151; border-radius:6px;
+}
+QLabel#embeddedNotice {
+    color:#374151; background:#fef3c7;
+    border:1px solid #f59e0b; border-radius:5px;
+    padding:8px;
+}
+QComboBox {
+    background:#111827; color:#f3f4f6;
+    border:1px solid #4b5563; border-radius:4px;
+    padding:5px 8px; min-height:22px;
+}
+QComboBox:disabled { color:#6b7280; }
+QComboBox QAbstractItemView {
+    background:#111827; color:#f3f4f6; selection-background-color:#2563eb;
+}
+QPushButton {
+    background:#374151; color:#f3f4f6;
+    border:1px solid #4b5563; border-radius:4px;
+    padding:5px 12px; min-height:22px;
+}
+QPushButton:hover { background:#4b5563; }
+QPushButton:disabled { color:#6b7280; background:#273244; }
+QPushButton:default { background:#2563eb; border-color:#1d4ed8; }
+QPushButton:default:hover { background:#1d4ed8; }
+QPushButton#linkButton {
+    color:#60a5fa; background:transparent; border:none;
+    padding:2px 0; text-align:left;
+}
+QPushButton#linkButton:hover { color:#93c5fd; text-decoration:underline; }
+"""
 
 # Top-frame navigation in the embedded sign-in browser is restricted to these
 # host suffixes. The goal is defense in depth against an open-redirect bug on
@@ -216,7 +263,7 @@ class LoginWindow(QDialog):
         self._verify_url_override = verify_url
         self._preferred_browser = browser_preference
         self.setWindowTitle(title)
-        self.resize(960, 760)
+        self.setStyleSheet(_LOGIN_STYLESHEET)
 
         profile = get_profile(self._account_id)
         self._profile = profile
@@ -228,75 +275,225 @@ class LoginWindow(QDialog):
         )
         self._view = QWebEngineView(self)
         self._view.setPage(self._page)
-        self._view.setVisible(False)
         self._login_url = login_url
         self._cookie_store = profile.cookieStore()
         self._cookie_store.cookieAdded.connect(self._on_embedded_cookie_added)
 
         # Allow popup OAuth windows (some sign-in flows use them).
         self._page.newWindowRequested.connect(self._handle_popup)
+        self._page.loadFinished.connect(self._on_embedded_page_loaded)
         self._popup_pages: list[_PopupPage] = []  # keep refs
-
-        self._instructions = QLabel("")
-        self._instructions.setWordWrap(True)
-        self._instructions.setStyleSheet(
-            "color:#374151; background:#fef3c7; padding:8px; border-radius:4px;"
-        )
-
-        self._status = QLabel("")
-        self._status.setStyleSheet("color:#dc2626;")
 
         self._browser_combo = QComboBox()
         self._installed_browsers = installed_browsers()
         for browser_id in BROWSER_LABELS:
             if browser_id in self._installed_browsers:
                 self._browser_combo.addItem(BROWSER_LABELS[browser_id], browser_id)
-        self._continue_btn = QPushButton("Continue")
-        self._continue_btn.clicked.connect(self._choose_external_browser)
-        self._embedded_btn = QPushButton("Use embedded browser")
-        self._embedded_btn.clicked.connect(self._use_embedded_browser)
-        self._verify_btn = QPushButton("I'm signed in")
-        self._verify_btn.setDefault(True)
-        self._verify_btn.setVisible(False)
-        self._verify_btn.clicked.connect(self._verify)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.reject)
+        self._browser_combo.currentIndexChanged.connect(self._update_continue_label)
 
-        button_row = QHBoxLayout()
-        button_row.addWidget(self._status, 1)
-        button_row.addWidget(self._browser_combo)
-        button_row.addWidget(self._continue_btn)
-        button_row.addWidget(self._embedded_btn)
-        button_row.addWidget(self._verify_btn)
-        button_row.addWidget(cancel_btn)
+        self._continue_btn = QPushButton()
+        self._continue_btn.clicked.connect(self._choose_external_browser)
+        self._update_continue_label()
+
+        self._choice_embedded_btn = QPushButton("Use embedded browser instead")
+        self._choice_embedded_btn.setObjectName("linkButton")
+        self._choice_embedded_btn.clicked.connect(self._use_embedded_browser)
+
+        self._embedded_btn = QPushButton("Use embedded browser instead")
+        self._embedded_btn.setObjectName("linkButton")
+        self._embedded_btn.clicked.connect(self._use_embedded_browser)
+
+        self._installed_btn = QPushButton("Use an installed browser")
+        self._installed_btn.clicked.connect(lambda: self._show_browser_choice())
+
+        self._verify_btn = QPushButton("I'm signed in")
+        self._verify_btn.clicked.connect(self._verify)
+
+        self._choice_page = self._build_choice_page()
+        self._waiting_page = self._build_waiting_page()
+        self._embedded_page = self._build_embedded_page()
+
+        self._pages = QStackedWidget()
+        self._pages.addWidget(self._choice_page)
+        self._pages.addWidget(self._waiting_page)
+        self._pages.addWidget(self._embedded_page)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
-        layout.addWidget(self._instructions)
-        layout.addWidget(self._view, 1)
-        layout.addLayout(button_row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._pages)
 
-        self.resize(680, 220)
         self._closing = False
         self._embedded_active = False
         self._embedded_auth_seen = False
         self._embedded_verify_scheduled = False
         self._verifying = False
+        self._verify_timeout: QTimer | None = None
         self._session_may_have_changed = False
         self._external_worker: ExternalLoginWorker | None = None
+        self._show_browser_choice()
         if browser_preference == "embedded":
             QTimer.singleShot(0, self._use_embedded_browser)
         elif browser_preference in self._installed_browsers:
             QTimer.singleShot(
                 0, lambda selected=browser_preference: self._start_external_login(selected)
             )
-        else:
-            message = ""
-            if browser_preference not in ("ask", "embedded"):
-                label = BROWSER_LABELS.get(browser_preference, "Selected browser")
-                message = f"{label} is not installed. Choose another sign-in method."
-            self._show_browser_choice(message)
+        elif browser_preference not in ("ask", "embedded"):
+            label = BROWSER_LABELS.get(browser_preference, "Selected browser")
+            self._show_browser_choice(
+                f"{label} is not installed. Choose another sign-in method."
+            )
+
+    @staticmethod
+    def _label(text: str, *, object_name: str = "", wrap: bool = True) -> QLabel:
+        label = QLabel(text)
+        label.setWordWrap(wrap)
+        if object_name:
+            label.setObjectName(object_name)
+        return label
+
+    def _cancel_button(self) -> QPushButton:
+        button = QPushButton("Cancel")
+        button.clicked.connect(self.reject)
+        return button
+
+    def _build_choice_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("loginPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(22, 20, 22, 18)
+        layout.setSpacing(10)
+
+        layout.addWidget(
+            self._label("Use an installed browser (recommended)", object_name="heading")
+        )
+        layout.addWidget(
+            self._label(
+                "AI Gauge opens a temporary browser profile and connects the "
+                "session after you finish signing in.",
+                object_name="secondary",
+            )
+        )
+
+        card = QFrame()
+        card.setObjectName("browserCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 10, 12, 10)
+        card_layout.setSpacing(6)
+
+        browser_row = QHBoxLayout()
+        browser_row.setSpacing(10)
+        browser_label = self._label("Browser", wrap=False)
+        browser_label.setMinimumWidth(62)
+        browser_row.addWidget(browser_label)
+        browser_row.addWidget(self._browser_combo, 1)
+        card_layout.addLayout(browser_row)
+
+        self._browser_hint = self._label(
+            "Supports Google, passkeys, and magic links.", object_name="secondary"
+        )
+        card_layout.addWidget(self._browser_hint)
+        layout.addWidget(card)
+
+        self._choice_error = self._label("", object_name="error")
+        self._choice_error.setVisible(False)
+        layout.addWidget(self._choice_error)
+
+        layout.addWidget(self._choice_embedded_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(
+            self._label(
+                "Best for email or magic-link sign-in. Google and passkeys may not work.",
+                object_name="secondary",
+            )
+        )
+
+        action_row = QHBoxLayout()
+        action_row.addStretch(1)
+        action_row.addWidget(self._continue_btn)
+        action_row.addWidget(self._cancel_button())
+        layout.addLayout(action_row)
+        return page
+
+    def _build_waiting_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("loginPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(22, 20, 22, 18)
+        layout.setSpacing(12)
+
+        self._waiting_heading = self._label("Continue in your browser", object_name="heading")
+        layout.addWidget(self._waiting_heading)
+        self._waiting_instructions = self._label("", object_name="secondary")
+        layout.addWidget(self._waiting_instructions)
+        layout.addStretch(1)
+        self._waiting_status = self._label("", object_name="status")
+        layout.addWidget(self._waiting_status)
+
+        action_row = QHBoxLayout()
+        action_row.addWidget(self._embedded_btn)
+        action_row.addStretch(1)
+        action_row.addWidget(self._cancel_button())
+        layout.addLayout(action_row)
+        return page
+
+    def _build_embedded_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("loginPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        notice = self._label(
+            "Embedded browser — best for email or magic-link sign-in. "
+            "Google and passkeys may not work here.",
+            object_name="embeddedNotice",
+        )
+        notice.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        layout.addWidget(notice)
+        layout.addWidget(self._view, 1)
+
+        self._embedded_status = self._label("", object_name="status")
+        action_row = QHBoxLayout()
+        action_row.addWidget(self._embedded_status, 1)
+        action_row.addWidget(self._installed_btn)
+        action_row.addWidget(self._verify_btn)
+        action_row.addWidget(self._cancel_button())
+        layout.addLayout(action_row)
+        return page
+
+    def _show_compact_page(self, page: QWidget, width: int, height: int) -> None:
+        self._pages.setCurrentWidget(page)
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(_MAX_WIDGET_SIZE, _MAX_WIDGET_SIZE)
+        self.setFixedSize(width, height)
+
+    def _show_resizable_page(self, page: QWidget, width: int, height: int) -> None:
+        self._pages.setCurrentWidget(page)
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(_MAX_WIDGET_SIZE, _MAX_WIDGET_SIZE)
+        self.setMinimumSize(720, 560)
+        self.resize(width, height)
+
+    def _update_continue_label(self, _index: int | None = None) -> None:
+        browser_id = self._browser_combo.currentData()
+        label = BROWSER_LABELS.get(browser_id, "browser")
+        self._continue_btn.setText(f"Continue with {label}")
+
+    @staticmethod
+    def _set_label_status(label: QLabel, text: str, color: str) -> None:
+        label.setText(text)
+        label.setStyleSheet(f"color:{color}; font-size:11px;")
+
+    def _set_active_status(self, text: str, color: str = "#9ca3af") -> None:
+        label = self._embedded_status if self._embedded_active else self._waiting_status
+        self._set_label_status(label, text, color)
+
+    def _set_default_action(self, button: QPushButton | None) -> None:
+        # QDialog has one default button across all stacked pages. Set it on
+        # every state transition so Enter cannot activate a hidden action from
+        # a different page merely because that button was constructed later.
+        for candidate in (self._continue_btn, self._verify_btn):
+            candidate.setDefault(candidate is button)
 
     @property
     def session_may_have_changed(self) -> bool:
@@ -306,29 +503,25 @@ class LoginWindow(QDialog):
         if self._closing:
             return
         self._stop_external_login()
+        self._cancel_verification()
         self._embedded_active = False
-        self._view.setVisible(False)
-        self._instructions.setText(
-            "Choose an installed browser for automatic sign-in. AI Gauge uses a "
-            "temporary isolated profile, supports Google and passkeys, and remembers "
-            "your choice. The embedded browser remains available for email or "
-            "magic-link sign-in."
-        )
-        self._browser_combo.setVisible(True)
-        self._continue_btn.setVisible(True)
+        self._view.stop()
         self._continue_btn.setEnabled(self._browser_combo.count() > 0)
-        self._embedded_btn.setText("Use embedded browser")
-        self._embedded_btn.setVisible(True)
-        self._verify_btn.setVisible(False)
-        self._status.setText(message or "Choose where to sign in.")
-        self._status.setStyleSheet(
-            "color:#dc2626;" if message else "color:#6b7280;"
+        self._browser_combo.setEnabled(self._browser_combo.count() > 0)
+        self._browser_hint.setText(
+            "Supports Google, passkeys, and magic links."
+            if self._browser_combo.count() > 0
+            else "No supported installed browser was found."
         )
+        self._choice_error.setText(message)
+        self._choice_error.setVisible(bool(message))
         if self._preferred_browser in self._installed_browsers:
             index = self._browser_combo.findData(self._preferred_browser)
             if index >= 0:
                 self._browser_combo.setCurrentIndex(index)
-        self.resize(680, 220)
+        self._update_continue_label()
+        self._show_compact_page(self._choice_page, 660, 320)
+        self._set_default_action(self._continue_btn)
 
     def _choose_external_browser(self) -> None:
         browser_id = self._browser_combo.currentData()
@@ -349,19 +542,19 @@ class LoginWindow(QDialog):
             )
             return
         self._embedded_active = False
-        self._view.setVisible(False)
-        self._browser_combo.setVisible(False)
-        self._continue_btn.setVisible(False)
-        self._embedded_btn.setText("Use embedded instead")
-        self._embedded_btn.setVisible(True)
-        self._verify_btn.setVisible(False)
-        self._instructions.setText(
-            f"Sign in to {self._provider_name()} in "
-            f"<b>{BROWSER_LABELS[selected]}</b>. AI Gauge opened an isolated "
-            "temporary browser profile and will connect the session automatically."
+        self._embedded_auth_seen = False
+        browser_label = BROWSER_LABELS[selected]
+        self._waiting_heading.setText(f"Continue in {browser_label}")
+        self._waiting_instructions.setText(
+            f"Finish signing in to {self._provider_name()} in the {browser_label} "
+            "window. AI Gauge will connect the session and close this dialog "
+            "automatically."
         )
-        self._status.setText(f"Opening {BROWSER_LABELS[selected]}…")
-        self._status.setStyleSheet("color:#6b7280;")
+        self._set_label_status(
+            self._waiting_status, f"Opening {browser_label}…", "#9ca3af"
+        )
+        self._show_compact_page(self._waiting_page, 620, 250)
+        self._set_default_action(None)
         worker = ExternalLoginWorker(
             self._provider,
             self._login_url,
@@ -385,8 +578,7 @@ class LoginWindow(QDialog):
     def _on_external_status(self, message: str) -> None:
         if self._closing:
             return
-        self._status.setText(message)
-        self._status.setStyleSheet("color:#2563eb;")
+        self._set_label_status(self._waiting_status, message, "#60a5fa")
 
     def _on_external_session_ready(self, cookies: list[dict]) -> None:
         if self._closing:
@@ -405,15 +597,14 @@ class LoginWindow(QDialog):
             self._on_external_failed("The browser signed in, but no session was found.")
             return
         self._session_may_have_changed = True
-        self._status.setText("Signed in. Verifying the session…")
-        self._status.setStyleSheet("color:#16a34a;")
+        self._set_label_status(
+            self._waiting_status, "Signed in. Verifying the session…", "#22c55e"
+        )
         QTimer.singleShot(1200, self._verify)
 
     def _on_external_failed(self, message: str) -> None:
         if self._closing:
             return
-        self._status.setText(message)
-        self._status.setStyleSheet("color:#dc2626;")
         self._show_browser_choice(message)
 
     def _use_embedded_browser(self) -> None:
@@ -424,21 +615,54 @@ class LoginWindow(QDialog):
             self._preferred_browser = "embedded"
             self.browser_preference_changed.emit("embedded")
         self._embedded_active = True
-        self._instructions.setText(
-            "Using AI Gauge's embedded browser. Email and magic-link sign-in "
-            "usually work here, but Google may reject this window by policy. "
-            "Use the real-browser flow for Google or passkeys."
-        )
-        self._view.setVisible(True)
-        self.resize(960, 760)
-        self._browser_combo.setVisible(False)
-        self._continue_btn.setVisible(False)
-        self._embedded_btn.setVisible(False)
-        self._verify_btn.setVisible(True)
+        self._embedded_auth_seen = False
         self._verify_btn.setEnabled(True)
-        self._status.setText("Waiting for sign-in…")
-        self._status.setStyleSheet("color:#6b7280;")
+        self._set_label_status(self._embedded_status, "Waiting for sign-in…", "#9ca3af")
+        self._show_resizable_page(self._embedded_page, 960, 760)
+        self._set_default_action(self._verify_btn)
         self._view.load(QUrl(self._login_url))
+
+    def _on_embedded_page_loaded(self, ok: bool) -> None:
+        """Recognize an authenticated shell, including a pre-existing session."""
+        if (
+            not ok
+            or self._closing
+            or not self._embedded_active
+            or self._verifying
+            or self._embedded_verify_scheduled
+        ):
+            return
+        target = VERIFY_TARGETS.get(self._provider)
+        if target is None:
+            return
+        landed = self._page.url()
+        if not _domain_matches(landed.host(), self._provider):
+            return
+        if "/login" in landed.path().lower():
+            return
+        self._page.runJavaScript(target[1], self._on_embedded_shell_result)
+
+    def _on_embedded_shell_result(self, result) -> None:
+        if (
+            result is not True
+            or self._closing
+            or not self._embedded_active
+            or self._verifying
+            or self._embedded_verify_scheduled
+        ):
+            return
+        self._embedded_auth_seen = True
+        self._session_may_have_changed = True
+        self._embedded_verify_scheduled = True
+        self._set_label_status(
+            self._embedded_status, "Signed in. Finishing…", "#22c55e"
+        )
+        QTimer.singleShot(250, self._accept_embedded_session)
+
+    def _accept_embedded_session(self) -> None:
+        self._embedded_verify_scheduled = False
+        if not self._closing and self._embedded_active:
+            self.accept()
 
     def _on_embedded_cookie_added(self, cookie) -> None:
         if self._closing or not self._embedded_active:
@@ -457,14 +681,27 @@ class LoginWindow(QDialog):
         if self._embedded_verify_scheduled or self._verifying:
             return
         self._embedded_verify_scheduled = True
-        self._status.setText("Signed in. Verifying the session…")
-        self._status.setStyleSheet("color:#16a34a;")
+        self._set_label_status(
+            self._embedded_status, "Signed in. Verifying the session…", "#22c55e"
+        )
         QTimer.singleShot(1000, self._verify_after_embedded_cookie)
 
     def _verify_after_embedded_cookie(self) -> None:
         self._embedded_verify_scheduled = False
         if not self._closing and self._embedded_active:
             self._verify()
+
+    def _cancel_verification(self) -> None:
+        timer = getattr(self, "_verify_timeout", None)
+        if timer is not None:
+            timer.stop()
+            self._verify_timeout = None
+        try:
+            self._page.loadFinished.disconnect(self._on_verify_load_finished)
+        except (TypeError, RuntimeError):
+            pass
+        self._verifying = False
+        self._embedded_verify_scheduled = False
 
     def _stop_external_login(self) -> None:
         worker = self._external_worker
@@ -499,20 +736,23 @@ class LoginWindow(QDialog):
         self._popup_pages.append(popup_page)
 
     def _on_google_started(self) -> None:
-        self._status.setText(
+        self._set_label_status(
+            self._embedded_status,
             "Google may refuse embedded sign-in. Cancel and click Sign in "
-            "again to use the real-browser flow."
+            "again to use the installed-browser flow.",
+            "#f59e0b",
         )
-        self._status.setStyleSheet("color:#6b7280;")
 
     def closeEvent(self, event) -> None:
         self._closing = True
+        self._cancel_verification()
         self._stop_external_login()
         self._close_popups()
         super().closeEvent(event)
 
     def done(self, result: int) -> None:
         self._closing = True
+        self._cancel_verification()
         self._stop_external_login()
         self._close_popups()
         super().done(result)
@@ -540,8 +780,7 @@ class LoginWindow(QDialog):
         url, check_js = VERIFY_TARGETS[self._provider]
         self._verify_url = self._verify_url_override or url
         self._verify_check_js = check_js
-        self._status.setText("Verifying session…")
-        self._status.setStyleSheet("color:#6b7280;")
+        self._set_active_status("Verifying session…")
 
         # Verify by navigating the *existing* signed-in view, not a fresh
         # page. A fresh QWebEnginePage racing against the cookie store's
@@ -631,17 +870,19 @@ class LoginWindow(QDialog):
             return
         self._verify_btn.setEnabled(True)
         if error:
-            self._status.setText(
-                f"Could not load verification page ({error}). Try again."
+            self._set_active_status(
+                f"Could not load verification page ({error}). Try again.",
+                "#ef4444",
             )
         else:
             if self._embedded_auth_seen:
-                self._status.setText(
+                self._set_active_status(
                     "The session is signed in but still loading. Wait a moment and "
-                    "try again."
+                    "try again.",
+                    "#ef4444",
                 )
             else:
-                self._status.setText(
-                    "Not signed in yet — please complete sign-in in the window above."
+                self._set_active_status(
+                    "Not signed in yet — please complete sign-in in the window above.",
+                    "#ef4444",
                 )
-        self._status.setStyleSheet("color:#dc2626;")

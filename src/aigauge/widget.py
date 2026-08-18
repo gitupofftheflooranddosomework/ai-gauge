@@ -84,8 +84,12 @@ COLLAPSED_MIN_WIDTH = WINDOW_COLLAPSED_MIN_WIDTH
 PANEL_BG = "#111827"
 PANEL_BORDER = "#1f2937"
 PANEL_CORNER_RADIUS = 8
-CORNER_SNAP_DISTANCE = 16
-CORNER_SNAP_INSET = 4
+# Distances are Qt device-independent pixels. Qt maps the pointer, window, and
+# available screen geometry into this same coordinate system, so these retain
+# the same apparent size at 100%, 150%, and 200% display scaling.
+CORNER_SNAP_DISTANCE = 32
+CORNER_SNAP_RELEASE_DISTANCE = 40
+CORNER_SNAP_INSET = 8
 
 
 def _clamp_height(value: int) -> int:
@@ -1532,6 +1536,8 @@ class UsageWidget(QWidget):
         self._config = config
         self._mouse_inside = False
         self._drag_offset: QPoint | None = None
+        self._drag_snap_corner: SnapCorner | None = None
+        self._drag_snap_screen = None
         self._resizing_with_grip = False
         self.setMinimumWidth(WINDOW_WIDTH)
         self.setMaximumWidth(WINDOW_MAX_WIDTH)
@@ -2457,6 +2463,8 @@ class UsageWidget(QWidget):
             self._update_snap_anchor_from_position()
         else:
             self._config.window.snap_corner = None
+            self._drag_snap_corner = None
+            self._drag_snap_screen = None
             self._remember_position()
         self._config.save()
 
@@ -2555,30 +2563,97 @@ class UsageWidget(QWidget):
                 return screen
         return self.screen() or QApplication.primaryScreen()
 
-    def _corner_near_current_position(self, screen) -> SnapCorner | None:
+    def _corner_gaps(
+        self, position: QPoint, corner: SnapCorner, screen
+    ) -> tuple[int, int]:
         geo = screen.availableGeometry()
-        left_gap = abs(self.x() - geo.left())
-        right_gap = abs(self.x() + self.width() - 1 - geo.right())
-        top_gap = abs(self.y() - geo.top())
-        bottom_gap = abs(self.y() + self.height() - 1 - geo.bottom())
+        left_gap = abs(position.x() - geo.left())
+        right_gap = abs(position.x() + self.width() - 1 - geo.right())
+        top_gap = abs(position.y() - geo.top())
+        bottom_gap = abs(position.y() + self.height() - 1 - geo.bottom())
+        horizontal_gap = left_gap if corner.endswith("left") else right_gap
+        vertical_gap = top_gap if corner.startswith("top") else bottom_gap
+        return horizontal_gap, vertical_gap
 
-        horizontal, horizontal_gap = min(
-            (("left", left_gap), ("right", right_gap)),
-            key=lambda item: item[1],
+    def _position_near_corner(
+        self,
+        position: QPoint,
+        corner: SnapCorner,
+        screen,
+        distance: int,
+    ) -> bool:
+        return max(self._corner_gaps(position, corner, screen)) <= distance
+
+    def _corner_near_position(
+        self,
+        position: QPoint,
+        screen,
+        distance: int = CORNER_SNAP_DISTANCE,
+    ) -> SnapCorner | None:
+        corners: tuple[SnapCorner, ...] = (
+            "top_left",
+            "top_right",
+            "bottom_left",
+            "bottom_right",
         )
-        vertical, vertical_gap = min(
-            (("top", top_gap), ("bottom", bottom_gap)),
-            key=lambda item: item[1],
+        corner, gaps = min(
+            ((corner, self._corner_gaps(position, corner, screen)) for corner in corners),
+            key=lambda item: max(item[1]),
         )
-        if max(horizontal_gap, vertical_gap) > CORNER_SNAP_DISTANCE:
+        if max(gaps) > distance:
             return None
-        corners: dict[tuple[str, str], SnapCorner] = {
-            ("top", "left"): "top_left",
-            ("top", "right"): "top_right",
-            ("bottom", "left"): "bottom_left",
-            ("bottom", "right"): "bottom_right",
-        }
-        return corners[(vertical, horizontal)]
+        return corner
+
+    def _corner_near_current_position(self, screen) -> SnapCorner | None:
+        return self._corner_near_position(self.pos(), screen)
+
+    def _screen_for_drag_position(self, position: QPoint, pointer: QPoint | None = None):
+        # Choose by the proposed window center rather than by the pointer. This
+        # avoids jumping to an adjacent monitor just because the grabbed point
+        # crossed its boundary while most of the widget remained on this one.
+        center = position + QPoint(self.width() // 2, self.height() // 2)
+        return QApplication.screenAt(center) or self._screen_for_position(
+            pointer or position
+        )
+
+    def _move_during_drag(
+        self, position: QPoint, pointer: QPoint | None = None
+    ) -> None:
+        """Move to the raw drag position or show a transient magnetic snap."""
+        if not self._config.window.snap_to_corners or self._is_popup_window():
+            self._drag_snap_corner = None
+            self._drag_snap_screen = None
+            self.move(position)
+            return
+
+        # Once captured, use a slightly larger release zone. The eight-pixel
+        # hysteresis prevents a one-pixel pointer wobble from flickering the
+        # widget in and out of the corner, while dragging away still detaches.
+        if self._drag_snap_corner is not None and self._drag_snap_screen is not None:
+            if self._position_near_corner(
+                position,
+                self._drag_snap_corner,
+                self._drag_snap_screen,
+                CORNER_SNAP_RELEASE_DISTANCE,
+            ):
+                self.move(
+                    self._snap_target(self._drag_snap_corner, self._drag_snap_screen)
+                )
+                return
+            self._drag_snap_corner = None
+            self._drag_snap_screen = None
+
+        screen = self._screen_for_drag_position(position, pointer)
+        if screen is None:
+            self.move(position)
+            return
+        corner = self._corner_near_position(position, screen)
+        if corner is None:
+            self.move(position)
+            return
+        self._drag_snap_corner = corner
+        self._drag_snap_screen = screen
+        self.move(self._snap_target(corner, screen))
 
     def _snap_target(self, corner: SnapCorner, screen) -> QPoint:
         geo = screen.availableGeometry()
@@ -2769,6 +2844,8 @@ class UsageWidget(QWidget):
             self._drag_offset = (
                 event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             )
+            self._drag_snap_corner = None
+            self._drag_snap_screen = None
             self._apply_window_opacity()
             event.accept()
 
@@ -2777,26 +2854,47 @@ class UsageWidget(QWidget):
             self._drag_offset is not None
             and event.buttons() & Qt.MouseButton.LeftButton
         ):
-            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            pointer = event.globalPosition().toPoint()
+            self._move_during_drag(pointer - self._drag_offset, pointer)
             event.accept()
 
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if event.button() != Qt.MouseButton.LeftButton or self._drag_offset is None:
-            super().mouseReleaseEvent(event)
+    def _finish_window_drag(self, release_point: QPoint) -> None:
+        if self._drag_offset is None:
             return
-        release_point = event.globalPosition().toPoint()
-        # Refit while the drag marker is still set so an old anchor cannot pull
-        # the window back before the release position is evaluated.
+        # Evaluate the release coordinate too: on some platforms the final
+        # mouse position arrives only with the release rather than a move.
+        self._move_during_drag(release_point - self._drag_offset, release_point)
+        corner = self._drag_snap_corner
+        screen = self._drag_snap_screen
+
+        # Refit while the drag marker is still set so the previous persisted
+        # anchor cannot pull the window back before this drag is committed.
         self._do_refit_height()
         self._drag_offset = None
-        self._update_snap_anchor_from_position(release_point)
+        self._drag_snap_corner = None
+        self._drag_snap_screen = None
+
+        if not self._is_popup_window():
+            if self._config.window.snap_to_corners and corner is not None:
+                self._config.window.snap_corner = corner
+                self._apply_snap_anchor(screen)
+            else:
+                self._config.window.snap_corner = None
+                self._clamp_to_visible_screen()
+                self._remember_position()
+
         self._apply_window_opacity()
-        # Persist position
         self._remember_position()
         self._config.window.collapsed = self._collapsed
         self._save_expanded_width()
         self._save_collapsed_width()
         self._config.save()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() != Qt.MouseButton.LeftButton or self._drag_offset is None:
+            super().mouseReleaseEvent(event)
+            return
+        self._finish_window_drag(event.globalPosition().toPoint())
         event.accept()
 
     def closeEvent(self, event):  # noqa: N802

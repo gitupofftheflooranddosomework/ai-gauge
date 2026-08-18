@@ -19,6 +19,7 @@ from aigauge.ratio import RatioEstimate
 from aigauge.widget import (
     CORNER_SNAP_DISTANCE,
     CORNER_SNAP_INSET,
+    CORNER_SNAP_RELEASE_DISTANCE,
     PANEL_BG,
     UsageWidget,
     _format_ratio_inline,
@@ -148,6 +149,93 @@ def test_moving_away_or_disabling_snap_releases_corner_anchor(qtbot):
     assert config.window.snap_to_corners is False
     assert config.window.snap_corner is None
     assert widget.pos() == anchored_position
+
+
+def test_drag_previews_corner_snap_and_detaches_when_moved_away(qtbot):
+    geo = QApplication.primaryScreen().availableGeometry()
+    config = Config()
+    widget = UsageWidget(config)
+    qtbot.addWidget(widget)
+
+    max_x = geo.right() - widget.width() + 1
+    max_y = geo.bottom() - widget.height() + 1
+    inside_capture = QPoint(
+        max_x - CORNER_SNAP_DISTANCE + 2,
+        max_y - CORNER_SNAP_DISTANCE + 2,
+    )
+
+    widget._move_during_drag(inside_capture, geo.bottomRight())  # noqa: SLF001
+
+    assert widget._drag_snap_corner == "bottom_right"  # noqa: SLF001
+    assert config.window.snap_corner is None, "preview must not persist before release"
+    assert widget.pos() == QPoint(
+        max_x - CORNER_SNAP_INSET,
+        max_y - CORNER_SNAP_INSET,
+    )
+
+    # Moving just outside the capture zone stays stable instead of flickering.
+    inside_release = QPoint(
+        max_x - CORNER_SNAP_DISTANCE - 2,
+        max_y - CORNER_SNAP_DISTANCE - 2,
+    )
+    widget._move_during_drag(inside_release, geo.bottomRight())  # noqa: SLF001
+    assert widget._drag_snap_corner == "bottom_right"  # noqa: SLF001
+    assert widget.pos() != inside_release
+
+    # Continuing away beyond the release zone immediately restores free movement.
+    detached = QPoint(
+        max_x - CORNER_SNAP_RELEASE_DISTANCE - 1,
+        max_y - CORNER_SNAP_RELEASE_DISTANCE - 1,
+    )
+    widget._move_during_drag(detached, detached)  # noqa: SLF001
+    assert widget._drag_snap_corner is None  # noqa: SLF001
+    assert widget.pos() == detached
+
+
+def test_releasing_live_snap_commits_corner_anchor(qtbot):
+    geo = QApplication.primaryScreen().availableGeometry()
+    config = Config()
+    widget = UsageWidget(config)
+    qtbot.addWidget(widget)
+
+    drag_offset = QPoint(12, 10)
+    max_x = geo.right() - widget.width() + 1
+    max_y = geo.bottom() - widget.height() + 1
+    raw_position = QPoint(
+        max_x - CORNER_SNAP_DISTANCE // 2,
+        max_y - CORNER_SNAP_DISTANCE // 2,
+    )
+    widget._drag_offset = drag_offset  # noqa: SLF001
+    widget._move_during_drag(raw_position, raw_position + drag_offset)  # noqa: SLF001
+
+    widget._finish_window_drag(raw_position + drag_offset)  # noqa: SLF001
+
+    assert widget._drag_offset is None  # noqa: SLF001
+    assert widget._drag_snap_corner is None  # noqa: SLF001
+    assert config.window.snap_corner == "bottom_right"
+    assert widget.x() + widget.width() - 1 == geo.right() - CORNER_SNAP_INSET
+    assert widget.y() + widget.height() - 1 == geo.bottom() - CORNER_SNAP_INSET
+
+
+def test_releasing_after_detach_clears_previous_anchor(qtbot):
+    geo = QApplication.primaryScreen().availableGeometry()
+    config = Config()
+    config.window.snap_corner = "top_left"
+    widget = UsageWidget(config)
+    qtbot.addWidget(widget)
+
+    drag_offset = QPoint(8, 8)
+    free_position = QPoint(
+        geo.center().x() - widget.width() // 2,
+        geo.center().y() - widget.height() // 2,
+    )
+    widget._drag_offset = drag_offset  # noqa: SLF001
+    widget._move_during_drag(free_position, free_position + drag_offset)  # noqa: SLF001
+
+    widget._finish_window_drag(free_position + drag_offset)  # noqa: SLF001
+
+    assert config.window.snap_corner is None
+    assert widget.pos() == free_position
 
 
 def test_title_bars_offer_distinct_view_and_hide_controls(qtbot):

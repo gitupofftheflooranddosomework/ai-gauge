@@ -105,7 +105,7 @@ def test_claude_signed_in_empty_usage_payload_is_idle_zero():
             "logged_out": False,
             "session": None,
             "weekly_all": None,
-            "title": "Claude",
+            "title": "New chat - Claude",
             "url": CLAUDE_USAGE_URL,
             "body_text": (
                 "New chat Search Chats Projects Recents Plan usage limits "
@@ -124,6 +124,43 @@ def test_claude_signed_in_empty_usage_payload_is_idle_zero():
         ("Weekly", 0.0, "idle"),
     ]
     assert all(metric.window is None for metric in snapshot.metrics)
+
+
+def test_claude_new_session_keeps_weekly_usage_and_marks_idle_rows():
+    snapshot = _build_snapshot(
+        {
+            "logged_out": False,
+            "session": {"percent": 0, "kind": "used", "reset_text": None},
+            "weekly_all": {
+                "percent": 2,
+                "kind": "used",
+                "reset_text": "Mon 5:59 PM",
+            },
+            "weekly_fable": {
+                "percent": 0,
+                "kind": "used",
+                "reset_text": None,
+            },
+            "title": "New chat - Claude",
+            "url": CLAUDE_USAGE_URL,
+            "body_text": (
+                "Plan usage limits Current session Starts when a message is sent "
+                "0% used Weekly limits All models Resets Mon 5:59 PM 2% used "
+                "Fable You haven’t used Fable yet 0% used"
+            ),
+        },
+        show_fable=True,
+    )
+
+    assert snapshot.status == SnapshotStatus.OK
+    assert [
+        (metric.label, metric.percent_used, metric.reset_label)
+        for metric in snapshot.metrics
+    ] == [
+        ("Session", 0.0, "idle"),
+        ("Weekly", 2.0, None),
+        ("Fable", 0.0, "idle"),
+    ]
 
 
 def test_claude_legacy_usage_url_can_still_be_idle_zero():

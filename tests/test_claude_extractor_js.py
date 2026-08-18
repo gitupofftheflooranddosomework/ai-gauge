@@ -46,6 +46,9 @@ process.stdout.write(JSON.stringify(result));
 SESSION = "Current session Resets in 3 hr 10 min 18% used"
 ALL_MODELS = "All models Resets in 22 hr 0 min 2% used"
 FABLE = "Fable Resets in 22 hr 0 min 4% used"
+IDLE_SESSION = "Current session Starts when a message is sent 0% used"
+IDLE_FABLE = "Fable You haven’t used Fable yet 0% used"
+LIVE_WEEKLY = "All models Resets Mon 5:59 PM 2% used"
 # Real banner text from the Max-plan usage dialog. It names Fable but is not a
 # usage row, and it sits directly above the bars.
 BANNER = (
@@ -159,7 +162,49 @@ def test_versioned_fable_row_label_still_matches(tmp_path):
     assert percents(result)["weekly_fable"] == 7
 
 
-def test_idle_panel_without_percentages_reports_no_rows(tmp_path):
+def test_current_claude_idle_session_layout_reports_mixed_usage(tmp_path):
+    wrapper = " ".join(
+        [
+            "Plan usage limits Max (5x)",
+            IDLE_SESSION,
+            "Weekly limits",
+            BANNER,
+            LIVE_WEEKLY,
+            IDLE_FABLE,
+        ]
+    )
+    result = run_extractor(
+        tmp_path,
+        [
+            (wrapper, 1100),
+            (IDLE_SESSION, 80),
+            (" ".join([BANNER, LIVE_WEEKLY, IDLE_FABLE]), 400),
+            (BANNER, 90),
+            (LIVE_WEEKLY, 60),
+            (IDLE_FABLE, 80),
+        ],
+    )
+
+    assert percents(result) == {"session": 0, "weekly_all": 2, "weekly_fable": 0}
+    assert result["session"]["reset_text"] is None
+    assert result["weekly_all"]["reset_text"] == "Mon 5:59 PM"
+    assert result["weekly_fable"]["reset_text"] is None
+    assert "__retry_after_ms" not in result
+
+
+def test_idle_copy_overrides_neighbor_percentage_in_shared_container(tmp_path):
+    shared = " ".join([IDLE_SESSION, LIVE_WEEKLY])
+
+    result = run_extractor(tmp_path, [(shared, 100)])
+
+    assert percents(result) == {
+        "session": 0,
+        "weekly_all": 2,
+        "weekly_fable": None,
+    }
+
+
+def test_legacy_idle_panel_without_percentages_reports_zero_rows(tmp_path):
     idle = (
         "Plan usage limits Current session Resets when you next use this limit "
         "All models Resets when you next use this limit"
@@ -167,7 +212,7 @@ def test_idle_panel_without_percentages_reports_no_rows(tmp_path):
     result = run_extractor(tmp_path, [(idle, 400)])
 
     assert percents(result) == {
-        "session": None,
-        "weekly_all": None,
+        "session": 0,
+        "weekly_all": 0,
         "weekly_fable": None,
     }

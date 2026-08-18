@@ -2,24 +2,24 @@
 
 ## Unreleased
 
-## 0.7.4 - 2026-08-17
+## 0.7.4 - 2026-08-18
 
 ### Added
 
-- Added an explicit, remembered sign-in-browser choice for Chrome, Edge, Brave, Chromium, or the embedded browser. First use asks instead of silently choosing Edge, and the preference can be changed under **Settings → General**.
-- Added the window context menu requested in [#9](https://github.com/jpajak/ai-gauge/issues/9), even when a system tray is available. **Compact view**, **Show header**, **Always on top**, and **Snap to corners** are independent, remembered choices, while Refresh, Settings, window visibility, and Quit remain available when the header is hidden. Moving the floating widget near a screen corner anchors it there through content and layout size changes; dragging it away or disabling snapping releases the anchor.
+- Added an explicit, remembered sign-in-browser choice for Chrome, Edge, Brave, or Chromium. First use asks which installed browser to use, the preference can be changed under **Settings → General**, and the embedded browser remains available as a fallback.
+- Added the complete window context menu requested in [#9](https://github.com/jpajak/ai-gauge/issues/9), even when a system tray is available. **Compact view**, **Show header**, and **Always on top** are independent, remembered choices, while Refresh, Settings, window visibility, and Quit remain accessible when the header is hidden.
+- Added magnetic corner snapping for the Windows/Linux floating widget. It previews the corner while dragging, detaches if the pointer keeps moving away, and commits an anchor on release that survives content and layout size changes.
 
 ### Fixed
 
-- Fixed the unpredictable sign-in flow reported in [#8](https://github.com/jpajak/ai-gauge/issues/8). Closing or losing an external browser now returns to a clear browser-choice state instead of automatically opening the embedded fallback with a stale failure message.
-- External sign-in now follows the loopback DevTools connection rather than assuming the original launcher process owns the browser window. This keeps Edge and other Chromium process handoffs from being misreported as a closed browser while their real window is still running.
-- Claude verification now recognizes its authenticated app shell as a valid session instead of requiring the usage dialog's exact `Plan usage limits` text. The normal provider refresh remains responsible for opening and reading the usage route, so a successfully signed-in Claude home page is no longer rejected.
-- A session written during sign-in triggers a provider refresh as soon as the dialog closes, even if verification was interrupted. Valid sessions no longer remain stale until the default five-minute active refresh.
+- Fixed Claude timing out at the start of a new five-hour session. Claude now renders the idle Session row as **Starts when a message is sent · 0% used** while the Weekly row can still have active usage; the extractor understands that mixed state, along with the equivalent unused-Fable row, instead of waiting forever for the old reset copy.
+- Fixed the unpredictable external sign-in flow reported in [#8](https://github.com/jpajak/ai-gauge/issues/8). Chromium process handoffs are followed through the live DevTools connection, and closing an unfinished browser returns to the chooser instead of unexpectedly opening the embedded fallback.
+- Fixed embedded Claude sign-in remaining open after a successful login. Verification now recognizes Claude's current **New chat - Claude** title and authenticated app shell, still rejects login pages, and refreshes the provider as soon as the dialog closes.
 
 ### Changed
 
-- The embedded fallback now watches for provider authentication cookies and verifies automatically; **I'm signed in** remains available for provider cookie-name changes and unusual login flows.
-- When a browser-backed provider is unavailable because no OpenGL context could be created, the tile now names the `AIGAUGE_FORCE_WEBENGINE=1` override. The probe reports whether *Qt* can obtain a context, and there are configurations where Chromium finds one on its own — those users were shown what read as a dead end.
+- Reworked sign-in into separate compact chooser, installed-browser waiting, and embedded-browser pages. The primary action names the selected browser, the embedded fallback and its limitations are clearly secondary, and authenticated embedded sessions are recognized automatically. **I'm signed in** remains available for unusual login flows.
+- Improved the no-OpenGL diagnostic for browser-backed providers by naming the `AIGAUGE_FORCE_WEBENGINE=1` override for systems where Chromium can obtain a context even though Qt's probe cannot.
 
 ## 0.7.3 - 2026-08-16
 

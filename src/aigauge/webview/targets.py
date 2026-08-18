@@ -16,13 +16,18 @@ VERIFY_TARGETS = {
         r"""(() => {
           const text = ((document.body && document.body.innerText) || '').replace(/\s+/g, ' ').trim();
           const usageVisible = /Plan usage limits|Current session|All models/i.test(text);
+          const loginVisible = /Log in to Claude|Sign in to Claude|Create an account/i.test(text);
+          const appShellVisible = /How can I help you today\?/i.test(text) ||
+            (/\bNew\b/i.test(text) && /\bProjects\b/i.test(text) &&
+              /\b(?:Artifacts|Chats and tasks)\b/i.test(text));
           const authenticatedRoute = location.pathname === '/new' ||
             location.pathname === '/settings/usage' ||
             /settings\/usage/i.test(location.hash);
           const onClaude = location.hostname === 'claude.ai';
-          const claudeShell = document.title.trim().toLowerCase() === 'claude' &&
+          const claudeTitle = /(?:^|[-–—]\s*)Claude$/i.test(document.title.trim());
+          const claudeShell = (appShellVisible || claudeTitle) &&
             authenticatedRoute && !/\/login(?:\/|$)/i.test(location.pathname);
-          return onClaude && (usageVisible || claudeShell);
+          return onClaude && !loginVisible && (usageVisible || claudeShell);
         })()""",
     ),
     "codex": (

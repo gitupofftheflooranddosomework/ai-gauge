@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import timedelta
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -54,20 +55,41 @@ EXTRACTOR_JS = r"""
   // row would otherwise be read as that model's row, reporting the neighbour's
   // percentage. Every occurrence is checked, so a wrapper holding both the
   // banner and the real row still qualifies.
-  function headsARow(text, label) {
+  function labelTailMatches(text, label, predicate) {
     const lower = text.toLowerCase();
     const needle = label.toLowerCase();
     let i = lower.indexOf(needle);
     while (i !== -1) {
-      // An optional version number absorbs a row renamed to "Fable 5"; the
-      // banner ("Fable 5 is still included…") still fails the tail test.
       const after = text.slice(i + needle.length).trim();
-      if (/^(?:\d+(?:\.\d+)?\s+)?(?:resets?\b|\d+(?:\.\d+)?\s*%|used\b|remaining\b|$)/i.test(after)) {
-        return true;
-      }
+      if (predicate(after)) return true;
       i = lower.indexOf(needle, i + 1);
     }
     return false;
+  }
+
+  function withoutVersion(after) {
+    // Absorb a row renamed to "Fable 5". The prose banner starts "Fable 5 is
+    // still included…", which does not match any valid row tail below.
+    return after.replace(/^\d+(?:\.\d+)?\s+/, '');
+  }
+
+  function isIdleRowTail(after) {
+    const tail = withoutVersion(after);
+    return /^resets?\s+when\b/i.test(tail) ||
+      /^starts\s+when\b.*\bmessage\b/i.test(tail) ||
+      /^you\s+haven['’]t\s+used\b.*\byet\b/i.test(tail);
+  }
+
+  function headsARow(text, label) {
+    return labelTailMatches(text, label, (after) => {
+      const tail = withoutVersion(after);
+      return isIdleRowTail(after) ||
+        /^(?:resets?\b|\d+(?:\.\d+)?\s*%|used\b|remaining\b|$)/i.test(tail);
+    });
+  }
+
+  function hasIdleRowCopy(text, label) {
+    return labelTailMatches(text, label, isIdleRowTail);
   }
 
   function findRowByLabel(label) {
@@ -77,7 +99,7 @@ EXTRACTOR_JS = r"""
     for (const el of candidates) {
       const t = norm(el);
       if (!t.toLowerCase().includes(label.toLowerCase())) continue;
-      if (!/%/.test(t)) continue;
+      if (!/%/.test(t) && !hasIdleRowCopy(t, label)) continue;
       if (!headsARow(t, label)) continue;
       let score = t.length;
       for (const other of ROW_LABELS) {
@@ -102,13 +124,16 @@ EXTRACTOR_JS = r"""
     const text = norm(row);
     const pctMatches = Array.from(text.matchAll(/(\d+(?:\.\d+)?)\s*%/g));
     const pctMatch = pctMatches[pctMatches.length - 1];
+    const idle = hasIdleRowCopy(text, label);
     const remaining = /remaining/i.test(text);
     const used = /used/i.test(text);
     const resetMatch = text.match(/Resets?\s+(?:in\s+)?(.+?)(?=\s*$|\s+(?:Daily|Weekly|All|Current|Claude|Fable|You)\b|\s*\d+%)/i);
     return {
       raw: text.slice(0, 400),
-      percent: pctMatch ? parseFloat(pctMatch[1]) : null,
-      kind: remaining ? 'remaining' : (used ? 'used' : 'unknown'),
+      // The label-specific idle copy is more authoritative than a percentage
+      // or "remaining" word inherited from a larger wrapper around other rows.
+      percent: idle ? 0 : (pctMatch ? parseFloat(pctMatch[1]) : null),
+      kind: idle ? 'used' : (remaining ? 'remaining' : (used ? 'used' : 'unknown')),
       reset_text: resetMatch ? resetMatch[1].trim() : null,
     };
   }
@@ -198,8 +223,8 @@ def _is_claude_usage_url(url: str) -> bool:
 def _looks_like_empty_signed_in_usage(payload: dict[str, Any]) -> bool:
     if not _is_claude_usage_url(str(payload.get("url") or "")):
         return False
-    title = str(payload.get("title") or "").strip().lower()
-    if title != "claude":
+    title = str(payload.get("title") or "").strip()
+    if re.search(r"(?:^|[-–—]\s*)Claude$", title, re.IGNORECASE) is None:
         return False
     body = str(payload.get("body_text") or "").lower()
     # Require positive evidence the usage panel actually rendered. Without

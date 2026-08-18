@@ -18,9 +18,11 @@ if (-not (Test-Path $venvPython)) {
 }
 
 & $venvPython -m pip install --quiet pyinstaller
+if ($LASTEXITCODE -ne 0) { Write-Error "Could not install/verify PyInstaller." }
 
 $versionInfo = Join-Path $PSScriptRoot "build\pyinstaller-version-info.txt"
 & $venvPython (Join-Path $PSScriptRoot "tools\write_pyinstaller_version_info.py") $versionInfo
+if ($LASTEXITCODE -ne 0) { Write-Error "Could not generate executable version metadata." }
 $appIcon = Join-Path $PSScriptRoot "src\aigauge\assets\aigaugeicon.ico"
 
 if ($OneFile) {
@@ -52,6 +54,9 @@ $args = @(
 if ($OneFile) { $args += "--onefile" }
 
 & $venvPython @args
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "PyInstaller build failed. If dist\ai-gauge\ai-gauge.exe is locked, close the running app and try again."
+}
 
 # --collect-all on the WebEngine modules also drags in Chromium's debug
 # resource packs, the DevTools front-end, and every Qt translation — ~140 MB
