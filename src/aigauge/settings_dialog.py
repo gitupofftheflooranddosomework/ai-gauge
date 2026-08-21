@@ -1067,6 +1067,59 @@ class SettingsDialog(QDialog):
         opencode_go_tab_layout.addWidget(opencode_go)
         opencode_go_tab_layout.addStretch(1)
 
+        mcp_tab = QWidget()
+        mcp_layout = QVBoxLayout(mcp_tab)
+        mcp_layout.setContentsMargins(10, 10, 10, 10)
+        mcp_layout.setSpacing(10)
+        mcp_intro = QLabel(
+            "AI Gauge can share sanitized usage with MCP clients. A pause policy "
+            "returns a blocked guard result when an account reaches its threshold. "
+            "The connected client must be configured to obey that result."
+        )
+        mcp_intro.setWordWrap(True)
+        mcp_layout.addWidget(mcp_intro)
+        policies_box = QGroupBox("Cooperative pause policies")
+        policies_form = QFormLayout(policies_box)
+        self.mcp_policy_controls: dict[str, tuple[QCheckBox, QSpinBox]] = {}
+        mcp_accounts = [
+            (account.id, account_display_name(account))
+            for account in self._browser_accounts
+        ]
+        if config.providers.copilot:
+            mcp_accounts.append(("copilot", "GitHub Copilot"))
+        if config.providers.openrouter:
+            mcp_accounts.append(("openrouter", "OpenRouter"))
+        for account_id, label in mcp_accounts:
+            enabled = QCheckBox("Pause at")
+            threshold = QSpinBox()
+            threshold.setRange(1, 100)
+            threshold.setSuffix("%")
+            threshold.setValue(config.mcp_pause_policies.get(account_id, 90))
+            threshold.setToolTip(f"MCP account ID: {account_id}")
+            enabled.setChecked(account_id in config.mcp_pause_policies)
+            threshold.setEnabled(enabled.isChecked())
+            enabled.toggled.connect(threshold.setEnabled)
+            row = QHBoxLayout()
+            row.addWidget(enabled)
+            row.addWidget(threshold)
+            row.addStretch(1)
+            policies_form.addRow(f"{label} ({account_id}):", row)
+            self.mcp_policy_controls[account_id] = (enabled, threshold)
+        mcp_layout.addWidget(policies_box)
+        command = QLabel(
+            "Bind each client profile to the account it actually uses:<br>"
+            "For Codex account switching: "
+            "<code>ai-gauge-mcp --auto-codex-account</code><br>"
+            "For a fixed account: "
+            "<code>ai-gauge-mcp --account-id &lt;account-id&gt;</code><br>"
+            "Guard instruction: Call <code>check_current_account_usage</code> "
+            "before costly work and stop whenever <code>allowed</code> is false."
+        )
+        command.setTextFormat(Qt.TextFormat.RichText)
+        command.setWordWrap(True)
+        mcp_layout.addWidget(command)
+        mcp_layout.addStretch(1)
+
         tabs = QTabWidget()
         tabs.addTab(general_tab, "General")
         tabs.addTab(claude_tab, "Claude")
@@ -1074,6 +1127,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(opencode_go_tab, "OpenCode")
         tabs.addTab(copilot_tab, "GitHub Copilot")
         tabs.addTab(openrouter_tab, "OpenRouter")
+        tabs.addTab(mcp_tab, "MCP")
         tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # ----- Buttons -----
@@ -1360,6 +1414,11 @@ class SettingsDialog(QDialog):
         self.ui_scale_changed = abs(new_ui_scale - self._initial_ui_scale) > 1e-3
         config.window.ui_scale = new_ui_scale
         config.sign_in_browser = str(self.sign_in_browser_combo.currentData())
+        config.mcp_pause_policies = {
+            account_id: threshold.value()
+            for account_id, (enabled, threshold) in self.mcp_policy_controls.items()
+            if enabled.isChecked()
+        }
         accounts = self._current_browser_accounts()
         config.browser_accounts = accounts
         config.providers.claude = self.claude_cb.isChecked()

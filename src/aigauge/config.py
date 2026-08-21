@@ -195,6 +195,8 @@ class Config(BaseModel):
     opencode_go: OpenCodeGoConfig = Field(default_factory=OpenCodeGoConfig)
     expanded_tiles: list[str] = Field(default_factory=list)
     collapsed_tiles: list[str] = Field(default_factory=list)
+    # Account id -> percent used at which cooperating MCP clients should pause.
+    mcp_pause_policies: dict[str, int] = Field(default_factory=dict)
     window: WindowState = Field(default_factory=WindowState)
 
     @classmethod

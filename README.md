@@ -209,6 +209,41 @@ See [RELEASING.md](RELEASING.md) for maintainer release steps.
 ./.venv/bin/python -m pytest            # macOS / Linux
 ```
 
+## MCP usage guard
+
+AI Gauge includes a local stdio MCP server for tools and agents that want to
+inspect subscription usage before starting expensive work. Open **Settings →
+MCP** to configure an optional pause percentage for each account.
+
+Codex can dynamically follow whichever account is currently logged in. Name each
+AI Gauge Codex account after the email username used to sign in (for example,
+`mshaw` for `mshaw@example.com`), then launch:
+
+```text
+ai-gauge-mcp --auto-codex-account
+```
+
+The identity is resolved again for every guard check, so logging out or switching
+Codex accounts does not require editing the MCP configuration. Logged-out,
+unmapped, or ambiguous identities fail closed.
+
+Other MCP clients/profiles can be explicitly bound to the AI Gauge account they
+actually use:
+
+```text
+ai-gauge-mcp --account-id codex-work
+```
+
+Configure the client to call `check_current_account_usage` before costly work
+and stop whenever the returned `allowed` value is `false`. Other tools provide
+all sanitized usage and recommend the account with the most configured
+headroom.
+
+MCP cannot forcibly suspend a client that ignores tool results. The pause
+policy is enforced cooperatively by clients that follow the guard instruction.
+The server reads only AI Gauge's sanitized local usage cache; credentials and
+raw provider responses are never published.
+
 Tests cover: config round-trip, provider payload parsing, Copilot and OpenRouter REST helpers (with mocked HTTP), widget behavior, and snapshot models. End-to-end browser scraping for Claude, Codex, and OpenCode requires a live signed-in session and is validated manually.
 
 ## Contributing

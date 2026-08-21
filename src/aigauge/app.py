@@ -50,6 +50,7 @@ from .settings_dialog import SettingsDialog
 from .webview import runtime as webengine
 from .webview.cookies import clear_browser_session, hydrate_all_from_keyring
 from .widget import UsageWidget
+from .usage_cache import write_usage_cache
 
 # Resolved when the user first opens a sign-in window rather than imported at
 # module scope: .webview.login_window pulls in QtWebEngine, and importing
@@ -616,6 +617,10 @@ class App(QObject):
             self._snapshots.get(snapshot.provider),
         )
         self._snapshots[snapshot.provider] = snapshot
+        try:
+            write_usage_cache(self._snapshots)
+        except OSError:
+            log.exception("failed to publish MCP usage cache")
         self._cycle_signatures[snapshot.provider] = _snapshot_signature(snapshot)
         self._inflight.discard(snapshot.provider)
         if snapshot.status == SnapshotStatus.ERROR:
