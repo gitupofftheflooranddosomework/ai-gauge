@@ -58,6 +58,23 @@ if ($LASTEXITCODE -ne 0) {
     Write-Error "PyInstaller build failed. If dist\ai-gauge\ai-gauge.exe is locked, close the running app and try again."
 }
 
+$mcpArgs = @(
+    "-m", "PyInstaller",
+    "--noconfirm",
+    "--clean",
+    "--console",
+    "--onefile",
+    "--noupx",
+    "--name", "ai-gauge-mcp",
+    "--paths", "src",
+    "pyinstaller_mcp_entry.py"
+)
+& $venvPython @mcpArgs
+if ($LASTEXITCODE -ne 0) { Write-Error "MCP helper build failed." }
+if (-not $OneFile) {
+    Move-Item -LiteralPath (Join-Path $PSScriptRoot "dist\ai-gauge-mcp.exe") -Destination (Join-Path $PSScriptRoot "dist\ai-gauge\ai-gauge-mcp.exe") -Force
+}
+
 # --collect-all on the WebEngine modules also drags in Chromium's debug
 # resource packs, the DevTools front-end, and every Qt translation — ~140 MB
 # the app never loads. Strip them before the folder is archived (issue #7).
@@ -73,6 +90,8 @@ Write-Host ""
 Write-Host "Build complete." -ForegroundColor Green
 if ($OneFile) {
     Write-Host "Binary: dist\ai-gauge.exe"
+    Write-Host "MCP helper: dist\ai-gauge-mcp.exe"
 } else {
     Write-Host "Folder: dist\ai-gauge\  (run ai-gauge.exe inside)"
+    Write-Host "MCP helper: dist\ai-gauge\ai-gauge-mcp.exe"
 }

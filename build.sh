@@ -58,6 +58,20 @@ fi
 
 "$VENV_PY" "${PYINSTALLER_ARGS[@]}"
 
+"$VENV_PY" -m PyInstaller \
+    --noconfirm \
+    --clean \
+    --console \
+    --onefile \
+    --noupx \
+    --name ai-gauge-mcp \
+    --paths src \
+    pyinstaller_mcp_entry.py
+
+if [ "$(uname -s)" != "Darwin" ] && [ "$ONEFILE" -eq 0 ]; then
+    mv dist/ai-gauge-mcp dist/ai-gauge/ai-gauge-mcp
+fi
+
 # On macOS, mark the bundle as a menu-bar-only agent so it doesn't show a
 # Dock icon. Tradeoff: the floating-widget mode (off by default on Mac)
 # also won't appear in Cmd-Tab while LSUIElement is set.
@@ -113,12 +127,14 @@ case "$(uname -s)" in
         else
             echo "Bundle: dist/ai-gauge.app"
         fi
+        echo "MCP helper: dist/ai-gauge-mcp"
         ;;
     *)
         if [ "$ONEFILE" -eq 1 ]; then
             echo "Binary: dist/ai-gauge"
         else
             echo "Folder: dist/ai-gauge/  (run ./ai-gauge inside)"
+            echo "MCP helper: dist/ai-gauge/ai-gauge-mcp"
         fi
         ;;
 esac

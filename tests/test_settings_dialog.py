@@ -67,6 +67,25 @@ def test_codex_open_usage_button_launches_browser(qtbot, monkeypatch):
     assert opened == [settings_dialog.CODEX_USAGE_URL]
 
 
+def test_mcp_integration_defaults_off_and_gates_policies(qtbot, monkeypatch):
+    monkeypatch.setattr(settings_dialog, "set_start_at_login", lambda enabled: None)
+    config = Config()
+    dialog = SettingsDialog(config)
+    qtbot.addWidget(dialog)
+
+    assert not dialog.mcp_enabled_cb.isChecked()
+    enabled, threshold = dialog.mcp_policy_controls["codex"]
+    assert not enabled.isEnabled()
+    assert not threshold.isEnabled()
+
+    dialog.mcp_enabled_cb.setChecked(True)
+    enabled.setChecked(True)
+    dialog.apply_to(config)
+
+    assert config.mcp_enabled is True
+    assert config.mcp_pause_policies["codex"] == 90
+
+
 
 
 def test_opencode_go_sign_in_button_emits_sign_in_signal(qtbot):

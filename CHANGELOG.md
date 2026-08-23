@@ -6,13 +6,14 @@
 
 ### Added
 
-- Added a local stdio MCP server that exposes sanitized per-account usage, account recommendations, usage resources, and cooperative pause guards without exposing cookies, tokens, or provider responses.
-- Added per-account MCP pause thresholds in Settings. Codex clients can dynamically follow the currently logged-in Codex identity, while other clients can retain an explicit fixed-account binding.
+- Added an optional local stdio MCP server that exposes sanitized per-account usage, safe account recommendations, usage resources, and cooperative pause guards without exposing cookies, tokens, or provider responses. The integration is disabled by default and publishes no cache until enabled.
+- Added per-account MCP pause thresholds in Settings with explicit fixed-account binding for each MCP client profile.
 
 ### Fixed
 
 - Fixed MCP usage becoming stale or unavailable while AI Gauge was hidden in the system tray. Cache publication now uses unique temporary files and retries brief Windows sharing violations, allowing multiple MCP chats to read usage while background refreshes publish new snapshots.
-- Active Codex account resolution now follows login, logout, and account switches on every guard check, and fails closed when the active identity cannot be mapped unambiguously.
+- Configured MCP guards now fail closed for stale, failed, malformed, or ineligible usage data, ignore OpenRouter model-share percentages, and never recommend an account that is already blocked.
+- Packaged MCP helpers now complete a real protocol handshake in CI and shut down cleanly after stdio clients disconnect.
 
 ## 0.7.4 - 2026-08-18
 

@@ -4,7 +4,7 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import keyring
 from pydantic import BaseModel, Field
@@ -167,6 +167,9 @@ class OpenCodeGoConfig(BaseModel):
     colors: ColorThresholds = Field(default_factory=ColorThresholds)
 
 
+McpPauseThreshold = Annotated[int, Field(ge=1, le=100)]
+
+
 class Config(BaseModel):
     active_refresh_interval_minutes: int = Field(default=5, ge=1, le=180)
     refresh_interval_minutes: int = Field(default=60, ge=1, le=180)
@@ -195,8 +198,10 @@ class Config(BaseModel):
     opencode_go: OpenCodeGoConfig = Field(default_factory=OpenCodeGoConfig)
     expanded_tiles: list[str] = Field(default_factory=list)
     collapsed_tiles: list[str] = Field(default_factory=list)
+    # Disabled by default so normal GUI usage publishes no MCP cache.
+    mcp_enabled: bool = False
     # Account id -> percent used at which cooperating MCP clients should pause.
-    mcp_pause_policies: dict[str, int] = Field(default_factory=dict)
+    mcp_pause_policies: dict[str, McpPauseThreshold] = Field(default_factory=dict)
     window: WindowState = Field(default_factory=WindowState)
 
     @classmethod

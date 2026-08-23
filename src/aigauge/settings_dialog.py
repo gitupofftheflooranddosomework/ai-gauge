@@ -1078,6 +1078,12 @@ class SettingsDialog(QDialog):
         )
         mcp_intro.setWordWrap(True)
         mcp_layout.addWidget(mcp_intro)
+        self.mcp_enabled_cb = QCheckBox("Enable MCP integration")
+        self.mcp_enabled_cb.setChecked(config.mcp_enabled)
+        self.mcp_enabled_cb.setToolTip(
+            "Publish sanitized local usage for explicitly configured MCP clients."
+        )
+        mcp_layout.addWidget(self.mcp_enabled_cb)
         policies_box = QGroupBox("Cooperative pause policies")
         policies_form = QFormLayout(policies_box)
         self.mcp_policy_controls: dict[str, tuple[QCheckBox, QSpinBox]] = {}
@@ -1105,12 +1111,11 @@ class SettingsDialog(QDialog):
             row.addStretch(1)
             policies_form.addRow(f"{label} ({account_id}):", row)
             self.mcp_policy_controls[account_id] = (enabled, threshold)
+        policies_box.setEnabled(self.mcp_enabled_cb.isChecked())
+        self.mcp_enabled_cb.toggled.connect(policies_box.setEnabled)
         mcp_layout.addWidget(policies_box)
         command = QLabel(
             "Bind each client profile to the account it actually uses:<br>"
-            "For Codex account switching: "
-            "<code>ai-gauge-mcp --auto-codex-account</code><br>"
-            "For a fixed account: "
             "<code>ai-gauge-mcp --account-id &lt;account-id&gt;</code><br>"
             "Guard instruction: Call <code>check_current_account_usage</code> "
             "before costly work and stop whenever <code>allowed</code> is false."
@@ -1414,6 +1419,7 @@ class SettingsDialog(QDialog):
         self.ui_scale_changed = abs(new_ui_scale - self._initial_ui_scale) > 1e-3
         config.window.ui_scale = new_ui_scale
         config.sign_in_browser = str(self.sign_in_browser_combo.currentData())
+        config.mcp_enabled = self.mcp_enabled_cb.isChecked()
         config.mcp_pause_policies = {
             account_id: threshold.value()
             for account_id, (enabled, threshold) in self.mcp_policy_controls.items()

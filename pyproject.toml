@@ -27,7 +27,6 @@ dependencies = [
     "websocket-client>=1.8",
     "pydantic>=2.6",
     "keyring>=25.0",
-    "mcp>=1.27,<2",
     "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
 ]
 
@@ -38,7 +37,11 @@ Issues = "https://github.com/jpajak/ai-gauge/issues"
 Security = "https://github.com/jpajak/ai-gauge/security"
 
 [project.optional-dependencies]
+mcp = [
+    "mcp>=1.27,<2",
+]
 dev = [
+    "mcp>=1.27,<2",
     "pytest>=8.0",
     "pytest-qt>=4.4",
     "responses>=0.25",
