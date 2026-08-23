@@ -1,6 +1,6 @@
 # Plan: ship the MCP usage guard as a minimal opt-in integration
 
-**Status:** implemented locally; cross-platform packaged-helper CI pending
+**Status:** implemented; local tests and cross-platform packaged-helper CI pass
 **Related:** PR #10, “Add MCP usage guard and tray-safe cache for v0.7.5”
 
 ## Product boundary
@@ -225,11 +225,10 @@ claims.
 - [x] Only explicit, currently valid account IDs can be bound.
 - [x] Recommendations never return blocked accounts.
 - [x] Normal source installation does not install the MCP SDK.
-- [ ] Release artifacts contain a working ai-gauge-mcp helper on all platforms
-      (Windows packaging and protocol verified locally; macOS/Linux pending CI).
+- [ ] Exact release-archive placement remains gated by the tag release workflow;
+      one-file helper packaging and protocol are verified on all platforms in PR CI.
 - [x] README/package/application/changelog versions agree.
-- [x] The full local test suite passes (395 tests); all remote CI jobs remain
-      pending until the branch is pushed.
+- [x] The full local test suite passes (395 tests) and all nine PR CI jobs pass.
 
 ## Explicitly deferred
 
