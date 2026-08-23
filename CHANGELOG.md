@@ -8,6 +8,7 @@
 
 - Added an optional local stdio MCP server that exposes sanitized per-account usage, safe account recommendations, usage resources, and cooperative pause guards without exposing cookies, tokens, or provider responses. The integration is disabled by default and publishes no cache until enabled.
 - Added per-account MCP pause thresholds in Settings with explicit fixed-account binding for each MCP client profile.
+- Release archives now include the `ai-gauge-mcp` helper: inside the `ai-gauge` folder on Windows and Linux, and beside `ai-gauge.app` on macOS. macOS users must clear quarantine on the helper separately from the app bundle (`xattr -dr com.apple.quarantine ai-gauge-mcp`), otherwise Gatekeeper stops it silently when an MCP client launches it.
 
 ### Fixed
 

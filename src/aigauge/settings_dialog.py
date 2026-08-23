@@ -1420,12 +1420,21 @@ class SettingsDialog(QDialog):
         config.window.ui_scale = new_ui_scale
         config.sign_in_browser = str(self.sign_in_browser_combo.currentData())
         config.mcp_enabled = self.mcp_enabled_cb.isChecked()
+        accounts = self._current_browser_accounts()
+        # The MCP tab's rows are built once, from the accounts present when the
+        # dialog opened. An account removed since then still has a control here,
+        # so filter against what is actually being saved rather than persisting
+        # a policy for an account that no longer exists.
+        live_policy_ids = {account.id for account in accounts}
+        if self.copilot_cb.isChecked():
+            live_policy_ids.add("copilot")
+        if self.openrouter_cb.isChecked():
+            live_policy_ids.add("openrouter")
         config.mcp_pause_policies = {
             account_id: threshold.value()
             for account_id, (enabled, threshold) in self.mcp_policy_controls.items()
-            if enabled.isChecked()
+            if enabled.isChecked() and account_id in live_policy_ids
         }
-        accounts = self._current_browser_accounts()
         config.browser_accounts = accounts
         config.providers.claude = self.claude_cb.isChecked()
         config.providers.codex = self.codex_cb.isChecked()

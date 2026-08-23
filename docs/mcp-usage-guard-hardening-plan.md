@@ -80,6 +80,12 @@ present that result as verified safe capacity.
 Return stable reason_code values in addition to human-readable reasons so
 tests and clients do not parse prose.
 
+Distinguish "AI Gauge published nothing" from "the last refresh failed". An
+unreadable or absent cache is reported as cache_unavailable, not
+snapshot_not_ok: both block, but only one of them means a refresh happened.
+The cache carries an explicit availability flag so an empty-but-real
+publication is never mistaken for a missing one.
+
 ### 4. Filter informational metrics
 
 The existing UsageMetric.tag already distinguishes OpenRouter model-breakdown
@@ -93,7 +99,10 @@ If a configured policy has no eligible percentage, fail closed.
 
 ### 5. Keep cache contents minimal and lifecycle-safe
 
-Add a cache schema version and publication timestamp. Publish only:
+Add a cache schema version and publication timestamp. Stamp timestamps with an
+explicit UTC offset: snapshots are recorded in naive local time, so around a
+DST fall-back a pre-transition reading otherwise reads as future-dated and the
+guard blocks until the wall clock catches up. Publish only:
 
 - account ID
 - status
@@ -134,6 +143,12 @@ release artifact alongside the GUI application. Its stdout is reserved for MCP
 protocol traffic. Exercise initialize, tool discovery, a guard call, and clean
 shutdown against the frozen helper on every supported CI platform.
 
+Give the helper the same Windows product/version resource the GUI carries: it
+is unsigned and launched headlessly by MCP clients, so a reputation block is
+silent rather than a visible prompt. Have both build scripts assert the helper
+reached the path release.yml packages from, so a layout mistake fails at build
+time rather than partway through a tag release.
+
 ### 8. Update Settings and documentation
 
 The MCP tab should:
@@ -142,6 +157,8 @@ The MCP tab should:
 - contain the default-off enable checkbox
 - disable policy controls while integration is off
 - document explicit --account-id binding only
+- save policies only for accounts that still exist when the dialog is applied,
+  since the tab's rows are built once, before an account can be removed
 
 Fix the README version, describe how to enable the integration, distinguish
 source installations from release artifacts, and remove automatic-account
@@ -153,6 +170,9 @@ claims.
 
 - Add mcp_enabled=false.
 - Constrain mcp_pause_policies values to 1–100.
+- Drop unusable policy entries during migration. Config.load() falls back to a
+  default Config on any validation error, so an out-of-range threshold would
+  otherwise discard every unrelated setting the user has saved.
 
 ### src/aigauge/settings_dialog.py
 
@@ -180,6 +200,9 @@ claims.
 - Validate schema, status, timestamps, freshness, and numeric percentages.
 - Filter by guard_eligible.
 - Make recommendation reuse the validated guard path.
+- Build rows one account at a time so a configured account absent from the
+  cache yields an unknown-status row the guard rejects, instead of a
+  missing-row case every caller must remember to handle.
 - Add stable reason codes and optional-SDK handling.
 
 ### pyproject.toml and build/release scripts
@@ -188,8 +211,13 @@ claims.
 - Build and package the separate console helper.
 - Add a packaged-helper smoke check where practical.
 
-### README.md, CHANGELOG.md, and tests
+### README.md, SECURITY.md, RELEASING.md, CHANGELOG.md, and tests
 
+- Record the usage cache in SECURITY.md's data-at-rest section, including its
+  0600 mode and the fields excluded by construction.
+- Cover the helper in the release checklist, including the macOS quarantine
+  step and the manual-fallback archive command that would otherwise omit it.
+- Note that --account-id scopes the guard, not visibility.
 - Correct version consistency and describe the opt-in behavior.
 - Add focused regressions for every safety correction.
 
@@ -202,6 +230,9 @@ claims.
 - Fresh, stale, future, and malformed fetched_at values.
 - Missing, string, boolean, NaN, and infinite percentages.
 - Invalid JSON and invalid UTF-8 cache contents.
+- Absent cache reported as unavailable rather than as a failed refresh, and an
+  empty-but-published cache not treated as absent.
+- An out-of-range or malformed pause threshold does not reset unrelated config.
 - OpenRouter daily budget at 10% plus a model-share row at 100%.
 - Removed and disabled account IDs.
 - No policy versus configured policy with no eligible metric.
@@ -228,7 +259,15 @@ claims.
 - [ ] Exact release-archive placement remains gated by the tag release workflow;
       one-file helper packaging and protocol are verified on all platforms in PR CI.
 - [x] README/package/application/changelog versions agree.
-- [x] The full local test suite passes (395 tests) and all nine PR CI jobs pass.
+- [x] A blocked guard names the real cause: an unpublished cache is reported as
+      cache_unavailable rather than as a failed refresh.
+- [x] A bad MCP threshold cannot discard unrelated saved settings.
+- [x] A policy is never saved for an account removed in the same dialog session.
+- [x] Cache timestamps survive a backwards clock change.
+- [x] The packaged helper carries product/version metadata, and both build
+      scripts assert its release path.
+- [x] RELEASING.md's manual fallback ships the helper on every platform.
+- [x] The full local test suite passes (404 tests) and all nine PR CI jobs pass.
 
 ## Explicitly deferred
 

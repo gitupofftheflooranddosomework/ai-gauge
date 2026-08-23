@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -134,6 +136,58 @@ def test_mcp_pause_policy_thresholds_are_validated():
         Config(mcp_pause_policies={"codex": 0})
     with pytest.raises(ValidationError):
         Config(mcp_pause_policies={"codex": 101})
+
+
+def test_out_of_range_pause_policy_does_not_discard_other_settings(
+    tmp_path, monkeypatch
+):
+    """Config.load() falls back to defaults on any validation error.
+
+    A hand-edited or future-written threshold outside 1-100 must not take the
+    user's refresh interval, accounts, and window geometry down with it.
+    """
+    monkeypatch.setattr("aigauge.config.app_data_dir", lambda: tmp_path)
+    config_path().write_text(
+        json.dumps(
+            {
+                "active_refresh_interval_minutes": 3,
+                "refresh_interval_minutes": 17,
+                "start_at_login": True,
+                "mcp_enabled": True,
+                "mcp_pause_policies": {"codex": 120, "claude": 80},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = Config.load()
+
+    assert loaded.refresh_interval_minutes == 17
+    assert loaded.active_refresh_interval_minutes == 3
+    assert loaded.start_at_login is True
+    assert loaded.mcp_enabled is True
+    # The unusable entry is dropped; a missing policy fails closed at the guard.
+    assert loaded.mcp_pause_policies == {"claude": 80}
+
+
+def test_malformed_pause_policies_are_dropped(tmp_path, monkeypatch):
+    monkeypatch.setattr("aigauge.config.app_data_dir", lambda: tmp_path)
+    config_path().write_text(
+        json.dumps(
+            {
+                "active_refresh_interval_minutes": 4,
+                "refresh_interval_minutes": 23,
+                "mcp_pause_policies": {"codex": "90", "claude": True, "go": None},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = Config.load()
+
+    assert loaded.refresh_interval_minutes == 23
+    assert loaded.mcp_pause_policies == {}
+
 
 def test_load_missing_returns_defaults():
     c = Config.load()

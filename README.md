@@ -204,6 +204,13 @@ See [RELEASING.md](RELEASING.md) for maintainer release steps.
 
 ## Tests
 
+Tests need the dev extras, which the run-from-source install above omits:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e .[dev]     # Windows
+./.venv/bin/python -m pip install -e '.[dev]'           # macOS / Linux
+```
+
 ```powershell
 .\.venv\Scripts\python.exe -m pytest    # Windows
 ./.venv/bin/python -m pytest            # macOS / Linux
@@ -232,10 +239,25 @@ pip install -e '.[mcp]'
 Release archives include the helper next to the application: inside the
 `ai-gauge` folder on Windows/Linux and alongside `ai-gauge.app` on macOS.
 
+On macOS the helper is a separate unsigned binary outside the `.app`, so
+clearing quarantine on the bundle does not cover it. Gatekeeper kills it
+silently when an MCP client launches it — the client just reports a failed
+server. Clear it once after extracting:
+
+```bash
+xattr -dr com.apple.quarantine ai-gauge-mcp
+```
+
 Configure the client to call `check_current_account_usage` before costly work
 and stop whenever the returned `allowed` value is `false`. Other tools provide
 all sanitized usage and recommend the account with the most configured
 headroom.
+
+`--account-id` selects which account the *guard* applies to; it is not an
+access boundary. `get_ai_usage` and `recommend_ai_account` deliberately report
+every enabled account — that is what makes a recommendation possible — so a
+connected client sees all of their display names. Name accounts accordingly if
+that matters to you.
 
 MCP cannot forcibly suspend a client that ignores tool results. The pause
 policy is enforced cooperatively by clients that follow the guard instruction.

@@ -386,3 +386,30 @@ def test_clear_saved_pat_checkbox_removes_existing_pat(qtbot, monkeypatch):
     dialog._accept()  # noqa: SLF001
 
     assert calls == [None]
+
+
+def test_mcp_policy_for_removed_account_is_not_saved(qtbot, monkeypatch):
+    """The MCP tab's rows are built once, before an account can be removed.
+
+    Without a save-side filter, apply_to() would persist a pause policy for an
+    account that no longer exists — inert at guard time, but it accumulates in
+    config and reappears with a stale label next time Settings opens.
+    """
+    monkeypatch.setattr(settings_dialog, "set_start_at_login", lambda enabled: None)
+    monkeypatch.setattr(settings_dialog, "clear_browser_session", lambda account_id: None)
+    config = Config()
+    dialog = SettingsDialog(config)
+    qtbot.addWidget(dialog)
+
+    dialog.mcp_enabled_cb.setChecked(True)
+    for account_id in ("codex", "claude"):
+        dialog.mcp_policy_controls[account_id][0].setChecked(True)
+
+    # Drop the Codex account the way the Accounts tab does.
+    dialog._browser_account_rows = [
+        row for row in dialog._browser_account_rows if row.account_id != "codex"
+    ]
+    dialog.apply_to(config)
+
+    assert "claude" in config.mcp_pause_policies
+    assert "codex" not in config.mcp_pause_policies

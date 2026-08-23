@@ -35,7 +35,15 @@ async def _smoke_test(helper: Path) -> str:
             params = StdioServerParameters(
                 command=str(helper),
                 args=["--account-id", "codex"],
-                env={"APPDATA": appdata},
+                # app_data_dir() reads a different variable per OS, and the MCP
+                # client inherits the real HOME by default. Redirect all three
+                # so this never reads (or fails against) a maintainer's own
+                # AI Gauge configuration when run outside CI.
+                env={
+                    "APPDATA": appdata,
+                    "HOME": appdata,
+                    "XDG_CONFIG_HOME": appdata,
+                },
             )
             async with stdio_client(params, errlog=errlog) as (read, write):
                 async with ClientSession(read, write) as session:

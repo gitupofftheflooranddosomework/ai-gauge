@@ -174,6 +174,66 @@ def test_openrouter_breakdown_percentage_does_not_trip_guard(monkeypatch):
     assert result["account"]["max_percent_used"] == 10
 
 
+def test_guard_fails_closed_for_account_absent_from_cache(monkeypatch):
+    """A configured account the cache has never seen still yields a row.
+
+    _account_row never returns None, so the guard evaluates an unknown-status
+    row and blocks rather than hitting a separate missing-row path.
+    """
+    config = _config(codex=90)
+    published = _cache(10, account_id="claude")
+    published["accounts"]["claude"]["status"] = "ok"
+    _patch_context(monkeypatch, config, published)
+
+    result = check_usage_guard("codex")
+
+    assert result["allowed"] is False
+    assert result["reason_code"] == "snapshot_not_ok"
+    assert result["account"]["status"] == "unknown"
+    assert result["account"]["max_percent_used"] is None
+
+
+def test_dst_shifted_local_timestamp_stays_fresh(monkeypatch):
+    """Offset-aware timestamps survive a clock that moved backwards.
+
+    A naive local stamp taken before a fall-back reads as future-dated
+    afterwards and trips invalid_timestamp; the published offset prevents that.
+    """
+    from datetime import timezone
+
+    config = _config(codex=90)
+    ahead = timezone(timedelta(hours=2))
+    behind = timezone(timedelta(hours=1))
+    taken = datetime.now(ahead) - timedelta(minutes=2)
+    cache = _cache(10)
+    cache["accounts"]["codex"]["fetched_at"] = taken.isoformat()
+    _patch_context(monkeypatch, config, cache)
+
+    assert check_usage_guard("codex")["reason_code"] == "allowed_below_threshold"
+
+    # Same instant, expressed against the post-transition offset.
+    cache["accounts"]["codex"]["fetched_at"] = taken.astimezone(behind).isoformat()
+    assert check_usage_guard("codex")["reason_code"] == "allowed_below_threshold"
+
+
+def test_published_cache_timestamps_carry_utc_offset(tmp_path, monkeypatch):
+    monkeypatch.setattr("aigauge.usage_cache.app_data_dir", lambda: tmp_path)
+    write_usage_cache(
+        {
+            "codex": UsageSnapshot(
+                provider="codex",
+                status=SnapshotStatus.OK,
+                metrics=[UsageMetric("Weekly", 42)],
+            )
+        }
+    )
+    cached = read_usage_cache()
+
+    assert datetime.fromisoformat(cached["published_at"]).tzinfo is not None
+    fetched_at = cached["accounts"]["codex"]["fetched_at"]
+    assert datetime.fromisoformat(fetched_at).tzinfo is not None
+
+
 def test_guard_rejects_removed_or_disabled_account(monkeypatch):
     config = _config(codex=90)
     config.browser_accounts = []
@@ -263,7 +323,59 @@ def test_usage_cache_invalid_utf8_fails_closed(tmp_path, monkeypatch):
     result = check_usage_guard("codex")
 
     assert result["allowed"] is False
-    assert result["reason_code"] == "snapshot_not_ok"
+    assert result["reason_code"] == "cache_unavailable"
+
+
+def test_missing_cache_is_reported_as_unavailable_not_failed_refresh(
+    tmp_path, monkeypatch
+):
+    """A guard blocked because AI Gauge is not running must say so.
+
+    An unreadable cache still carries the current schema version, so without a
+    distinct code it surfaces as ``snapshot_not_ok`` — "the latest refresh is
+    not OK" — when in fact no refresh was ever published.
+    """
+    monkeypatch.setattr("aigauge.usage_cache.app_data_dir", lambda: tmp_path)
+    config = _config(codex=90)
+    monkeypatch.setattr("aigauge.mcp_server.Config.load", lambda: config)
+    monkeypatch.setattr(mcp_server, "read_usage_cache", read_usage_cache)
+
+    result = check_usage_guard("codex")
+
+    assert result["allowed"] is False
+    assert result["reason_code"] == "cache_unavailable"
+
+    usage = mcp_server.get_ai_usage()
+
+    assert usage["accounts"] == []
+    assert usage["reason_code"] == "cache_unavailable"
+    assert "has not published" in usage["reason"]
+
+
+def test_published_cache_is_never_treated_as_unavailable(tmp_path, monkeypatch):
+    monkeypatch.setattr("aigauge.usage_cache.app_data_dir", lambda: tmp_path)
+    write_usage_cache(
+        {
+            "codex": UsageSnapshot(
+                provider="codex",
+                status=SnapshotStatus.OK,
+                metrics=[UsageMetric("Weekly", 12)],
+            )
+        }
+    )
+    config = _config(codex=90)
+    monkeypatch.setattr("aigauge.mcp_server.Config.load", lambda: config)
+    monkeypatch.setattr(mcp_server, "read_usage_cache", read_usage_cache)
+
+    assert check_usage_guard("codex")["reason_code"] == "allowed_below_threshold"
+
+
+def test_empty_but_published_cache_is_distinct_from_missing(tmp_path, monkeypatch):
+    """Publishing zero accounts is a real refresh, not an unavailable cache."""
+    monkeypatch.setattr("aigauge.usage_cache.app_data_dir", lambda: tmp_path)
+    write_usage_cache({})
+
+    assert read_usage_cache().get("available") is True
 
 
 def test_usage_cache_retries_windows_sharing_violation(tmp_path, monkeypatch):

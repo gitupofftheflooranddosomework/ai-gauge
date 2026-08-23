@@ -20,9 +20,17 @@ def usage_cache_path() -> Path:
 
 
 def _empty_cache(message: str) -> dict:
+    """Stand-in for a cache AI Gauge never published or could not read.
+
+    ``available`` distinguishes this from a real publication with no accounts.
+    Without it a reader cannot tell "AI Gauge is not running" from "the last
+    refresh failed", because both arrive as an empty account map carrying the
+    current schema version.
+    """
     return {
         "schema_version": CACHE_SCHEMA_VERSION,
         "published_at": None,
+        "available": False,
         "accounts": {},
         "message": message,
     }
@@ -30,9 +38,15 @@ def _empty_cache(message: str) -> dict:
 
 def write_usage_cache(snapshots: dict[str, UsageSnapshot]) -> None:
     """Publish the minimal sanitized usage projection used by the MCP guard."""
+    # Timestamps carry an explicit UTC offset. Snapshots are stamped in naive
+    # local time, so around a DST fall-back a reading taken before the shift
+    # otherwise reads as up to an hour in the future and the guard blocks until
+    # the wall clock catches up. astimezone() pins the offset in effect when the
+    # reading was taken, keeping the comparison monotonic across the change.
     payload: dict[str, object] = {
         "schema_version": CACHE_SCHEMA_VERSION,
-        "published_at": datetime.now().isoformat(),
+        "published_at": datetime.now().astimezone().isoformat(),
+        "available": True,
         "accounts": {},
     }
     accounts = payload["accounts"]
@@ -40,7 +54,7 @@ def write_usage_cache(snapshots: dict[str, UsageSnapshot]) -> None:
     for account_id, snapshot in snapshots.items():
         accounts[account_id] = {
             "status": snapshot.status.value,
-            "fetched_at": snapshot.fetched_at.isoformat(),
+            "fetched_at": snapshot.fetched_at.astimezone().isoformat(),
             "metrics": [
                 {
                     "label": metric.label,
